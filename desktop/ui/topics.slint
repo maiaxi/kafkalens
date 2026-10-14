@@ -53,8 +53,7 @@ export component TopicsPane inherits Rectangle {
                     }
                     if topic.unreadable: Badge {
                         source: @image-url("icons/lock.svg");
-                        width: 11px;
-                        height: 11px;
+                        size: 11px;
                         colorize: Palette.foreground.with-alpha(0.5);
                     }
                     Rectangle { horizontal-stretch: 1; }

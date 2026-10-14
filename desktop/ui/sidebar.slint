@@ -38,20 +38,20 @@ component FolderRow inherits Rectangle {
         padding-left: 4px;
         padding-right: 8px;
         spacing: 6px;
-        Image {
-            source: @image-url("icons/chevron.svg");
-            width: 12px;
-            height: 12px;
-            y: (parent.height - self.height) / 2;
-            colorize: Palette.foreground.with-alpha(0.55);
-            transform-rotation: item.expanded ? 90deg : 0deg;
-            animate transform-rotation { duration: 120ms; }
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("icons/chevron.svg");
+                width: 12px;
+                height: 12px;
+                colorize: Palette.foreground.with-alpha(0.55);
+                transform-rotation: item.expanded ? 90deg : 0deg;
+                animate transform-rotation { duration: 120ms; }
+            }
         }
-        Image {
+        Badge {
             source: @image-url("icons/folder.svg");
-            width: 15px;
-            height: 15px;
-            y: (parent.height - self.height) / 2;
+            size: 15px;
             colorize: Palette.foreground.with-alpha(0.6);
         }
         Text {
@@ -83,13 +83,15 @@ component ConnectionRow inherits Rectangle {
         padding-left: item.indented ? 24px : 10px;
         padding-right: 10px;
         spacing: 8px;
-        Rectangle {
-            width: 8px;
-            height: 8px;
-            y: (parent.height - self.height) / 2;
-            border-radius: 4px;
-            background: item.status == 2 ? #22c55e : item.status == 3 ? #f59e0b
-                : item.status == 1 ? Palette.foreground.with-alpha(0.5) : Palette.foreground.with-alpha(0.2);
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: item.status == 2 ? #22c55e : item.status == 3 ? #f59e0b
+                    : item.status == 1 ? Palette.foreground.with-alpha(0.5) : Palette.foreground.with-alpha(0.2);
+            }
         }
         VerticalLayout {
             alignment: center;

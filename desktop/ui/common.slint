@@ -75,10 +75,20 @@ export component IconToggle inherits Rectangle {
     }
 }
 
-// Small coloured glyph (status, permissions) next to a label.
-export component Badge inherits Image {
-    width: 13px;
-    height: 13px;
+// Small coloured glyph (status, permissions) next to a label, centred
+// vertically in its row (an Image alone sits at the top of a layout).
+export component Badge inherits VerticalLayout {
+    in property <image> source;
+    in property <brush> colorize;
+    in property <length> size: 13px;
+
+    alignment: center;
+    Image {
+        source: root.source;
+        colorize: root.colorize;
+        width: root.size;
+        height: root.size;
+    }
 }
 
 // Label + control row used by the forms.
