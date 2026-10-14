@@ -20,25 +20,63 @@ the zip and its SHA-256. Review the draft, then publish it by hand.
 
 To build the same artifact locally: `scripts/bundle-app.sh --universal`.
 
-## Signing and notarization
+## Signing
 
-Releases are currently ad-hoc signed and not notarized: macOS blocks the
-first launch of each downloaded version, and the release notes and README
-explain how to open it anyway.
-
-The workflow can also sign with a Developer ID certificate and notarize with
-Apple, which removes that step for users. This needs a paid Apple Developer
-Program membership, which the project does not have; the steps below are kept
-in case that changes.
+Releases are signed with a **self-signed** certificate ("Kafkalens Release
+Signing") kept in the repository secrets. It does not make macOS trust the
+app: the first launch of each downloaded version is still blocked by
+Gatekeeper, and the README and release notes explain how to open it. What
+it does give is a signature that stays the same across versions, so the
+Keychain "Always Allow" for saved passwords survives updates (with ad-hoc
+signing every version would ask again).
 
 | Secret | Value |
 | --- | --- |
-| `MACOS_CERTIFICATE_P12` | The "Developer ID Application" certificate and private key, exported from Keychain Access as `.p12`, base64-encoded (`base64 -i cert.p12 \| pbcopy`). |
-| `MACOS_CERTIFICATE_PASSWORD` | Password chosen when exporting the `.p12`. |
-| `MACOS_SIGN_IDENTITY` | The identity name, e.g. `Developer ID Application: Jane Doe (TEAMID1234)`. |
+| `MACOS_CERTIFICATE_P12` | Certificate and private key as `.p12`, base64-encoded. |
+| `MACOS_CERTIFICATE_PASSWORD` | Password of the `.p12`. |
+| `MACOS_SIGN_IDENTITY` | Certificate name: `Kafkalens Release Signing`. |
+
+The private key exists only in those secrets. If it is lost or replaced,
+create a new certificate (below) and update the three secrets; users then
+confirm Keychain access once more after updating.
+
+```sh
+cat > cert.cnf <<'CNF'
+[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = ext
+[dn]
+CN = Kafkalens Release Signing
+O = Kafkalens
+[ext]
+basicConstraints = critical, CA:false
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, codeSigning
+subjectKeyIdentifier = hash
+CNF
+/usr/bin/openssl req -x509 -newkey rsa:3072 -sha256 -days 7300 -nodes \
+  -keyout key.pem -out cert.pem -config cert.cnf
+/usr/bin/openssl pkcs12 -export -inkey key.pem -in cert.pem \
+  -name "Kafkalens Release Signing" -out cert.p12   # prompts for a password
+base64 -i cert.p12 | gh secret set MACOS_CERTIFICATE_P12
+gh secret set MACOS_CERTIFICATE_PASSWORD             # the password above
+gh secret set MACOS_SIGN_IDENTITY --body "Kafkalens Release Signing"
+rm key.pem cert.p12
+```
+
+Use `/usr/bin/openssl` (LibreSSL): its `.p12` encryption is one the macOS
+`security` tool can import.
+
+### Notarization (not used)
+
+Notarization would remove the Gatekeeper step but needs a paid Apple
+Developer Program membership, which the project does not have. The workflow
+supports it if that changes: replace the certificate secrets with a
+"Developer ID Application" certificate and identity, and add:
+
+| Secret | Value |
+| --- | --- |
 | `APPLE_ID` | Apple ID email of the developer account. |
 | `APPLE_TEAM_ID` | 10-character team ID. |
-| `APPLE_APP_PASSWORD` | An app-specific password for that Apple ID (appleid.apple.com → Sign-In and Security). |
-
-Add them under the repository's Settings → Secrets and variables → Actions.
-Signing turns on as soon as `MACOS_CERTIFICATE_P12` is set.
+| `APPLE_APP_PASSWORD` | An app-specific password for that Apple ID. |

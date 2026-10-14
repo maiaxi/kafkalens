@@ -7,8 +7,11 @@
 #   --install     also copy the app to /Applications, replacing any older copy
 #
 # Signing: ad-hoc by default (fine for local use). Set KAFKALENS_SIGN_IDENTITY
-# to a "Developer ID Application: …" identity to sign for distribution with
-# the hardened runtime, as notarization requires.
+# to sign with a certificate from the keychain, with the hardened runtime.
+# Releases use a self-signed one: Gatekeeper still treats the app as from an
+# unidentified developer, but the signature stays the same across versions,
+# so Keychain "Always Allow" survives updates. A "Developer ID Application"
+# identity also gets a secure timestamp, which notarization requires.
 set -euo pipefail
 
 INSTALL=false
@@ -76,7 +79,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 if [[ -n "${KAFKALENS_SIGN_IDENTITY:-}" ]]; then
-  codesign --force --options runtime --timestamp \
+  TIMESTAMP=()
+  [[ "$KAFKALENS_SIGN_IDENTITY" == "Developer ID"* ]] && TIMESTAMP=(--timestamp)
+  codesign --force --options runtime ${TIMESTAMP[@]+"${TIMESTAMP[@]}"} \
     --sign "$KAFKALENS_SIGN_IDENTITY" "$APP"
 else
   codesign --force --sign - "$APP" >/dev/null
