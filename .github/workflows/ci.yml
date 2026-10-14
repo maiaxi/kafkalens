@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core tests (Linux, live brokers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Start brokers
+        run: |
+          docker compose --profile acl up -d
+          scripts/dev-acl-setup.sh
+          until docker exec kafkalens-kafka /opt/kafka/bin/kafka-topics.sh \
+              --bootstrap-server localhost:9092 --list >/dev/null 2>&1; do
+            sleep 2
+          done
+
+      - name: Seed sample data
+        run: cargo run -p kafkalens-core --example seed
+
+      - name: Test
+        run: cargo test -p kafkalens-core
+        env:
+          KAFKALENS_BOOTSTRAP: localhost:9092
+          KAFKALENS_ACL_BOOTSTRAP: localhost:9094
+
+  macos:
+    name: macOS app build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build core and bindings
+        run: scripts/build-core.sh debug
+
+      - name: Build app
+        working-directory: macos
+        run: swift build

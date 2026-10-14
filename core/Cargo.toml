@@ -1,0 +1,28 @@
+[package]
+name = "kafkalens-core"
+version = "0.1.0"
+edition = "2021"
+description = "UI-agnostic Kafka access layer for Kafkalens frontends"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/maiaxi/kafkalens"
+publish = false
+
+[lib]
+name = "kafkalens_core"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+futures-executor = "0.3"
+rdkafka = { version = "0.39", features = ["ssl-vendored", "libz-static", "zstd"] }
+serde_json = "1"
+thiserror = "2"
+uniffi = "0.32"
+uuid = { version = "1", features = ["v4"] }

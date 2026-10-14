@@ -1,0 +1,6 @@
+[env]
+# Must match `platforms` in macos/Package.swift, or the C dependencies
+# (librdkafka, OpenSSL) get built for the host OS version instead. Set here
+# rather than in a script so `cargo test` and the app build agree and do not
+# keep rebuilding librdkafka.
+MACOSX_DEPLOYMENT_TARGET = "14.0"

@@ -1,0 +1,97 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds the universal macOS app and creates a
+# *draft* GitHub release with it, to review and publish by hand.
+#
+# The app is signed with the certificate in MACOS_CERTIFICATE_P12 (a
+# self-signed one today, see docs/RELEASING.md) and notarized only when Apple
+# credentials exist. Without any secrets it is ad-hoc signed.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: macOS universal app
+    runs-on: macos-15
+    env:
+      HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+      HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check tag matches the crate version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' core/Cargo.toml | head -1)"
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match core/Cargo.toml version ${version}"
+            exit 1
+          fi
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+
+      - name: Import signing certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -hex 16)"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "KAFKALENS_SIGN_IDENTITY=$SIGN_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build app
+        run: scripts/bundle-app.sh --universal
+
+      - name: Notarize
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARIZATION == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent dist/Kafkalens.app "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple dist/Kafkalens.app
+
+      - name: Package
+        run: |
+          asset="Kafkalens-${VERSION}-macos-universal.zip"
+          ditto -c -k --keepParent dist/Kafkalens.app "dist/$asset"
+          (cd dist && shasum -a 256 "$asset" > "$asset.sha256")
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$HAS_NOTARIZATION" == "true" ]]; then
+            notes="Signed with Developer ID and notarized by Apple."
+          else
+            notes="**Not notarized by Apple.** macOS will block the first launch: open System Settings → Privacy & Security and click *Open Anyway*, or run \`xattr -dr com.apple.quarantine /Applications/Kafkalens.app\`."
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/$ASSET" "dist/$ASSET.sha256" \
+            --draft --generate-notes \
+            --title "Kafkalens ${VERSION}" \
+            --notes "Universal app for Apple Silicon and Intel Macs, macOS 14 or later.
+
+          ${notes}"
