@@ -1,0 +1,15 @@
+# Rust
+/target/
+
+# Swift / SwiftPM
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+DerivedData/
+
+# Build outputs
+/dist/
+/macos/RustLib/
+
+# macOS
+.DS_Store
