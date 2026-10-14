@@ -36,8 +36,9 @@ Download the latest `Kafkalens-<version>-macos-universal.zip` from
 `Kafkalens.app` to Applications. It runs on macOS 14 or later, on Apple
 Silicon and Intel.
 
-Until releases are notarized by Apple, macOS blocks the first launch. Open
-System Settings → Privacy & Security and click **Open Anyway**, or run:
+Releases are not notarized by Apple, so macOS blocks the first launch of
+each downloaded version. Open System Settings → Privacy & Security and click
+**Open Anyway**, or run:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Kafkalens.app

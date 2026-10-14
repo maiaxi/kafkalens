@@ -22,12 +22,14 @@ To build the same artifact locally: `scripts/bundle-app.sh --universal`.
 
 ## Signing and notarization
 
-Without the secrets below, the app is ad-hoc signed and macOS blocks its first
-launch on other machines (the release notes then explain how to open it
-anyway). With them, the workflow signs with a Developer ID certificate using
-the hardened runtime, notarizes with Apple and staples the ticket.
+Releases are currently ad-hoc signed and not notarized: macOS blocks the
+first launch of each downloaded version, and the release notes and README
+explain how to open it anyway.
 
-Requires a paid Apple Developer Program membership.
+The workflow can also sign with a Developer ID certificate and notarize with
+Apple, which removes that step for users. This needs a paid Apple Developer
+Program membership, which the project does not have; the steps below are kept
+in case that changes.
 
 | Secret | Value |
 | --- | --- |

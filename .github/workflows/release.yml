@@ -84,7 +84,7 @@ jobs:
           if [[ "$HAS_SIGNING" == "true" ]]; then
             notes="Signed with Developer ID and notarized by Apple."
           else
-            notes="**Not notarized.** macOS will block the first launch: open System Settings → Privacy & Security and click *Open Anyway*, or run \`xattr -dr com.apple.quarantine /Applications/Kafkalens.app\`."
+            notes="**Not notarized by Apple.** macOS will block the first launch: open System Settings → Privacy & Security and click *Open Anyway*, or run \`xattr -dr com.apple.quarantine /Applications/Kafkalens.app\`."
           fi
           gh release create "$GITHUB_REF_NAME" \
             "dist/$ASSET" "dist/$ASSET.sha256" \
