@@ -1,0 +1,244 @@
+// Connections sidebar: folders (collapsible) with their connections, then
+// the connections outside any folder. Rust flattens the tree into rows.
+
+import { Button, ListView, Palette } from "std-widgets.slint";
+import { Badge, SectionTitle } from "common.slint";
+
+export enum RowKind { folder, connection, heading }
+
+export struct SidebarRow {
+    kind: RowKind,
+    id: string,
+    name: string,
+    subtitle: string,
+    // Connections inside a folder are indented.
+    indented: bool,
+    expanded: bool,
+    // Connection: producing allowed (not read-only).
+    writable: bool,
+    // Folder: asks for confirmation before producing.
+    protected: bool,
+    // Connection: 0 idle, 1 connecting, 2 connected, 3 failed.
+    status: int,
+    folder-id: string,
+}
+
+export struct FolderItem {
+    id: string,
+    name: string,
+}
+
+component FolderRow inherits Rectangle {
+    in property <SidebarRow> item;
+    callback toggle();
+
+    border-radius: 6px;
+    background: touch.has-hover ? Palette.foreground.with-alpha(0.05) : transparent;
+    HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 8px;
+        spacing: 6px;
+        Image {
+            source: @image-url("icons/chevron.svg");
+            width: 12px;
+            height: 12px;
+            y: (parent.height - self.height) / 2;
+            colorize: Palette.foreground.with-alpha(0.55);
+            transform-rotation: item.expanded ? 90deg : 0deg;
+            animate transform-rotation { duration: 120ms; }
+        }
+        Image {
+            source: @image-url("icons/folder.svg");
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+            colorize: Palette.foreground.with-alpha(0.6);
+        }
+        Text {
+            text: item.name;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+            color: Palette.foreground.with-alpha(0.75);
+        }
+        if item.protected: Badge {
+            source: @image-url("icons/shield.svg");
+            colorize: #f59e0b;
+        }
+    }
+    touch := TouchArea {
+        clicked => { root.toggle(); }
+    }
+}
+
+component ConnectionRow inherits Rectangle {
+    in property <SidebarRow> item;
+    in property <bool> selected;
+    callback clicked();
+
+    border-radius: 6px;
+    background: selected ? Palette.accent-background.with-alpha(0.85) : touch.has-hover ? Palette.foreground.with-alpha(0.06) : transparent;
+    HorizontalLayout {
+        padding-left: item.indented ? 24px : 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            background: item.status == 2 ? #22c55e : item.status == 3 ? #f59e0b
+                : item.status == 1 ? Palette.foreground.with-alpha(0.5) : Palette.foreground.with-alpha(0.2);
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            HorizontalLayout {
+                spacing: 5px;
+                Text {
+                    text: item.name;
+                    font-weight: 600;
+                    overflow: elide;
+                    color: root.selected ? Palette.accent-foreground : Palette.foreground;
+                }
+                // Read-only is the norm; flag the connections that can write.
+                if item.writable: Badge {
+                    source: @image-url("icons/pencil.svg");
+                    colorize: #f59e0b;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Text {
+                text: item.subtitle;
+                font-size: 11px;
+                overflow: elide;
+                color: root.selected ? Palette.accent-foreground.with-alpha(0.8) : Palette.foreground.with-alpha(0.55);
+            }
+        }
+    }
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component ConnectionsPane inherits Rectangle {
+    in property <[SidebarRow]> rows;
+    in property <[FolderItem]> folders;
+    in property <string> selected-id;
+    in property <string> status;
+
+    callback select(string);
+    callback toggle-folder(string);
+    callback edit(string);
+    callback delete-connection(string);
+    // Connection id, folder id ("" for none).
+    callback move-to(string, string);
+    // Folder id ("" for none).
+    callback new-connection(string);
+    callback new-folder();
+    callback rename-folder(string);
+    callback toggle-confirm(string);
+    callback delete-folder(string);
+
+    background: Palette.alternate-background;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 6px;
+
+        ListView {
+            vertical-stretch: 1;
+            for row in root.rows: Rectangle {
+                height: row.kind == RowKind.connection ? 46px : 30px;
+
+                if row.kind == RowKind.heading: SectionTitle {
+                    x: 4px;
+                    text: row.name;
+                    vertical-alignment: center;
+                }
+
+                if row.kind == RowKind.folder: ContextMenuArea {
+                    Menu {
+                        MenuItem {
+                            title: "New Connection…";
+                            activated => { root.new-connection(row.id); }
+                        }
+                        MenuItem {
+                            title: "Rename…";
+                            activated => { root.rename-folder(row.id); }
+                        }
+                        MenuItem {
+                            title: row.protected ? "✓ Confirm Before Producing" : "Confirm Before Producing";
+                            activated => { root.toggle-confirm(row.id); }
+                        }
+                        MenuSeparator { }
+                        MenuItem {
+                            title: "Delete Folder";
+                            activated => { root.delete-folder(row.id); }
+                        }
+                    }
+                    FolderRow {
+                        item: row;
+                        toggle => { root.toggle-folder(row.id); }
+                    }
+                }
+
+                if row.kind == RowKind.connection: ContextMenuArea {
+                    Menu {
+                        MenuItem {
+                            title: "Edit…";
+                            activated => { root.edit(row.id); }
+                        }
+                        Menu {
+                            title: "Move to Folder";
+                            enabled: root.folders.length > 0;
+                            for folder in root.folders: MenuItem {
+                                title: folder.name;
+                                enabled: folder.id != row.folder-id;
+                                activated => { root.move-to(row.id, folder.id); }
+                            }
+                            MenuSeparator { }
+                            MenuItem {
+                                title: "None";
+                                enabled: row.folder-id != "";
+                                activated => { root.move-to(row.id, ""); }
+                            }
+                        }
+                        MenuSeparator { }
+                        MenuItem {
+                            title: "Delete";
+                            activated => { root.delete-connection(row.id); }
+                        }
+                    }
+                    ConnectionRow {
+                        item: row;
+                        selected: row.id == root.selected-id;
+                        clicked => { root.select(row.id); }
+                    }
+                }
+            }
+        }
+
+        if root.status != "": Text {
+            text: root.status;
+            font-size: 11px;
+            wrap: word-wrap;
+            color: Palette.foreground.with-alpha(0.6);
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            Button {
+                text: "+ Connection";
+                horizontal-stretch: 1;
+                clicked => { root.new-connection(""); }
+            }
+            Button {
+                text: "+ Folder";
+                horizontal-stretch: 1;
+                clicked => { root.new-folder(); }
+            }
+        }
+    }
+}

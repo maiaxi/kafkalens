@@ -216,7 +216,7 @@ impl KafkaClient {
         if !pending.is_empty() {
             let consumer: BaseConsumer = self.config.consumer_config()?.create()?;
             let mut tpl = TopicPartitionList::new();
-            for (&partition, _) in &pending {
+            for &partition in pending.keys() {
                 let start = cursors[&partition].next_offset;
                 tpl.add_partition_offset(&request.topic, partition, Offset::Offset(start))?;
             }

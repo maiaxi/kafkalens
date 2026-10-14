@@ -1,0 +1,258 @@
+// Message table and inspector.
+
+import { ListView, Palette, ScrollView } from "std-widgets.slint";
+import { Divider } from "common.slint";
+
+export struct MessageRow {
+    partition: string,
+    offset: string,
+    timestamp: string,
+    key: string,
+    value: string,
+    key-null: bool,
+    value-null: bool,
+}
+
+export struct HeaderItem {
+    key: string,
+    value: string,
+}
+
+export struct MessageDetail {
+    present: bool,
+    partition: string,
+    offset: string,
+    timestamp: string,
+    key: string,
+    key-format: string,
+    value: string,
+    value-format: string,
+    size: string,
+    headers: [HeaderItem],
+}
+
+component Field inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 12px;
+    Text {
+        text: root.label;
+        width: 80px;
+        color: Palette.foreground.with-alpha(0.55);
+    }
+    Text {
+        text: root.value;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+}
+
+component Payload inherits VerticalLayout {
+    in property <string> title;
+    in property <string> format;
+    in property <string> text;
+    in property <string> mono-font;
+    spacing: 6px;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Text { text: root.title; font-weight: 600; }
+        Text {
+            text: root.format;
+            font-size: 11px;
+            vertical-alignment: center;
+            color: Palette.foreground.with-alpha(0.55);
+        }
+    }
+    Rectangle {
+        background: Palette.foreground.with-alpha(0.05);
+        border-radius: 6px;
+        VerticalLayout {
+            padding: 8px;
+            Text {
+                text: root.text;
+                font-family: root.mono-font;
+                font-size: 12px;
+                wrap: char-wrap;
+            }
+        }
+    }
+}
+
+// Message table. Built from a ListView rather than StandardTableView, whose
+// rows only span the columns' minimum widths instead of the full table.
+component HeaderCell inherits Rectangle {
+    in property <string> title;
+    in property <string> arrow;
+    callback clicked();
+
+    HorizontalLayout {
+        padding-left: 10px;
+        spacing: 4px;
+        Text {
+            text: root.title;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+            color: Palette.foreground.with-alpha(0.65);
+            overflow: elide;
+        }
+        Text {
+            text: root.arrow;
+            font-size: 10px;
+            vertical-alignment: center;
+            color: Palette.foreground.with-alpha(0.65);
+        }
+    }
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component Cell inherits Text {
+    in property <bool> muted;
+    in property <bool> selected;
+    vertical-alignment: center;
+    overflow: elide;
+    color: selected ? Palette.accent-foreground : muted ? Palette.foreground.with-alpha(0.45) : Palette.foreground;
+}
+
+export component MessageTable inherits VerticalLayout {
+    in property <[MessageRow]> rows;
+    in property <string> mono-font;
+    in-out property <int> current-row: -1;
+    in property <int> sort-column: 2;
+    in property <bool> sort-ascending: false;
+    callback row-selected(int);
+    callback sort(int);
+
+    function arrow(column: int) -> string {
+        return column != root.sort-column ? "" : root.sort-ascending ? "▲" : "▼";
+    }
+
+    // Partition, offset and timestamp are fixed; key and value share the
+    // rest 1:3. Header and rows use the same constraints so they line up.
+    property <[length]> widths: [76px, 76px, 180px];
+
+    Rectangle {
+        height: 32px;
+        HorizontalLayout {
+            padding-left: 6px;
+            padding-right: 6px;
+            HeaderCell { width: widths[0]; title: "Partition"; arrow: arrow(0); clicked => { root.sort(0); } }
+            HeaderCell { width: widths[1]; title: "Offset"; arrow: arrow(1); clicked => { root.sort(1); } }
+            HeaderCell { width: widths[2]; title: "Timestamp"; arrow: arrow(2); clicked => { root.sort(2); } }
+            HeaderCell {
+                min-width: 80px; preferred-width: 0; horizontal-stretch: 1;
+                title: "Key"; arrow: arrow(3); clicked => { root.sort(3); }
+            }
+            HeaderCell {
+                min-width: 120px; preferred-width: 0; horizontal-stretch: 3;
+                title: "Value"; arrow: arrow(4); clicked => { root.sort(4); }
+            }
+        }
+    }
+    Divider { height: 1px; }
+
+    ListView {
+        vertical-stretch: 1;
+        for row[index] in root.rows: Rectangle {
+            property <bool> selected: index == root.current-row;
+            height: 30px;
+
+            Rectangle {
+                x: 6px;
+                width: parent.width - 12px;
+                border-radius: 5px;
+                background: selected ? Palette.accent-background.with-alpha(0.85)
+                    : touch.has-hover ? Palette.foreground.with-alpha(0.07)
+                    : mod(index, 2) == 0 ? Palette.foreground.with-alpha(0.035) : transparent;
+
+                // Same 10px inset as the header cells, so columns line up.
+                HorizontalLayout {
+                    padding-left: 10px;
+                    Cell { width: widths[0]; text: row.partition; selected: selected; }
+                    Cell { width: widths[1]; text: row.offset; selected: selected; }
+                    Cell { width: widths[2]; text: row.timestamp; selected: selected; }
+                    Cell {
+                        min-width: 80px; preferred-width: 0; horizontal-stretch: 1;
+                        text: row.key;
+                        font-family: root.mono-font;
+                        font-size: 12px;
+                        muted: row.key-null;
+                        selected: selected;
+                    }
+                    Cell {
+                        min-width: 120px; preferred-width: 0; horizontal-stretch: 3;
+                        text: row.value;
+                        font-family: root.mono-font;
+                        font-size: 12px;
+                        muted: row.value-null;
+                        selected: selected;
+                    }
+                }
+            }
+
+            touch := TouchArea {
+                clicked => {
+                    root.current-row = index;
+                    root.row-selected(index);
+                }
+            }
+        }
+    }
+}
+
+export component InspectorPane inherits Rectangle {
+    in property <MessageDetail> detail;
+    in property <string> mono-font;
+
+    background: Palette.alternate-background;
+
+    if !root.detail.present: Text {
+        text: "No Message Selected";
+        font-size: 15px;
+        font-weight: 600;
+        color: Palette.foreground.with-alpha(0.45);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    if root.detail.present: ScrollView {
+        VerticalLayout {
+            padding: 14px;
+            spacing: 14px;
+            alignment: start;
+
+            VerticalLayout {
+                spacing: 4px;
+                Field { label: "Partition"; value: root.detail.partition; }
+                Field { label: "Offset"; value: root.detail.offset; }
+                Field { label: "Timestamp"; value: root.detail.timestamp; }
+                Field { label: "Size"; value: root.detail.size; }
+            }
+
+            Payload {
+                title: "Key";
+                format: root.detail.key-format;
+                text: root.detail.key;
+                mono-font: root.mono-font;
+            }
+            Payload {
+                title: "Value";
+                format: root.detail.value-format;
+                text: root.detail.value;
+                mono-font: root.mono-font;
+            }
+
+            if root.detail.headers.length > 0: VerticalLayout {
+                spacing: 4px;
+                Text { text: "Headers"; font-weight: 600; }
+                for header in root.detail.headers: Field {
+                    label: header.key;
+                    value: header.value;
+                }
+            }
+        }
+    }
+}

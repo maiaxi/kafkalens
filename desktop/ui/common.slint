@@ -1,0 +1,95 @@
+// Small building blocks shared by the panes.
+
+import { Palette } from "std-widgets.slint";
+
+// Small caps section title, as in the macOS sidebar.
+export component SectionTitle inherits Text {
+    font-size: 11px;
+    font-weight: 600;
+    color: Palette.foreground.with-alpha(0.55);
+}
+
+export component Divider inherits Rectangle {
+    background: Palette.border;
+}
+
+export component SelectableRow inherits Rectangle {
+    in property <bool> selected;
+    callback clicked();
+
+    border-radius: 6px;
+    background: selected ? Palette.accent-background.with-alpha(0.85) : touch.has-hover ? Palette.foreground.with-alpha(0.06) : transparent;
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// Draggable boundary between panes. `size` is the width of the pane it
+// resizes; `grows-left` is for panes on the right, which widen when dragged
+// left. Each move applies the delta since the last event: the splitter moves
+// with the pane, so the pointer position is relative to its new place.
+export component Splitter inherits Rectangle {
+    in-out property <length> size;
+    in property <length> min-size;
+    in property <length> max-size;
+    in property <bool> grows-left;
+
+    width: 7px;
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        width: touch.has-hover || touch.pressed ? 3px : 1px;
+        background: touch.has-hover || touch.pressed ? Palette.accent-background : Palette.border;
+        animate width, background { duration: 120ms; }
+    }
+    touch := TouchArea {
+        mouse-cursor: col-resize;
+        moved => {
+            if self.pressed {
+                root.size = clamp(
+                    root.size + (root.grows-left ? -1 : 1) * (self.mouse-x - self.pressed-x),
+                    root.min-size, root.max-size);
+            }
+        }
+    }
+}
+
+// Flat icon button for the toolbar; highlighted while its pane is open.
+export component IconToggle inherits Rectangle {
+    in property <image> icon;
+    in-out property <bool> checked;
+
+    width: 30px;
+    height: 28px;
+    border-radius: 6px;
+    background: touch.pressed ? Palette.foreground.with-alpha(0.14)
+        : checked ? Palette.foreground.with-alpha(0.09)
+        : touch.has-hover ? Palette.foreground.with-alpha(0.06) : transparent;
+    Image {
+        source: root.icon;
+        width: 18px;
+        height: 18px;
+        colorize: root.checked ? Palette.foreground : Palette.foreground.with-alpha(0.5);
+    }
+    touch := TouchArea {
+        clicked => { root.checked = !root.checked; }
+    }
+}
+
+// Small coloured glyph (status, permissions) next to a label.
+export component Badge inherits Image {
+    width: 13px;
+    height: 13px;
+}
+
+// Label + control row used by the forms.
+export component FormRow inherits HorizontalLayout {
+    in property <string> label;
+    spacing: 12px;
+    Text {
+        text: root.label;
+        width: 150px;
+        vertical-alignment: center;
+        color: Palette.foreground.with-alpha(0.75);
+    }
+    @children
+}
