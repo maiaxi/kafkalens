@@ -28,17 +28,28 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/core/Cargo.toml" | head -1)"
 APP="$ROOT/dist/Kafkalens.app"
 
-SWIFT_ARCHS=()
 if $UNIVERSAL; then
   "$ROOT/scripts/build-core.sh" release --universal
-  SWIFT_ARCHS=(--arch arm64 --arch x86_64)
+  ARCHS=(arm64 x86_64)
 else
   "$ROOT/scripts/build-core.sh" release
+  ARCHS=("$(uname -m)")
 fi
 
+# One build per architecture, merged with lipo. `swift build --arch a --arch b`
+# switches to the Xcode build system, which fails to find the bindings
+# module on some Xcode versions.
 cd "$ROOT/macos"
-swift build -c release ${SWIFT_ARCHS[@]+"${SWIFT_ARCHS[@]}"}
-BIN="$(swift build -c release ${SWIFT_ARCHS[@]+"${SWIFT_ARCHS[@]}"} --show-bin-path)/Kafkalens"
+BINS=()
+for arch in "${ARCHS[@]}"; do
+  triple="$arch-apple-macosx14.0"
+  swift build -c release --triple "$triple"
+  # Copied right away: some toolchains use one output path for every triple.
+  cp "$(swift build -c release --triple "$triple" --show-bin-path)/Kafkalens" "$ROOT/macos/.build/Kafkalens-$arch"
+  BINS+=("$ROOT/macos/.build/Kafkalens-$arch")
+done
+BIN="$ROOT/macos/.build/Kafkalens-$(IFS=-; echo "${ARCHS[*]}")"
+lipo -create "${BINS[@]}" -output "$BIN"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
