@@ -12,7 +12,10 @@ mod models;
 pub use client::KafkaClient;
 pub use config::{ConfigEntry, ConnectionConfig, SaslMechanism, SecurityProtocol};
 pub use error::KafkaLensError;
-pub use format::{format_payload, FormattedPayload, PayloadFormat};
+pub use format::{
+    editable_payload, encode_payload, format_payload, EditablePayload, FormattedPayload,
+    InputEncoding, PayloadFormat,
+};
 pub use models::*;
 
 uniffi::setup_scaffolding!();

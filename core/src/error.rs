@@ -11,6 +11,9 @@ pub enum KafkaLensError {
     #[error("this connection is read-only")]
     ReadOnly,
 
+    #[error("{message}")]
+    InvalidPayload { message: String },
+
     #[error("kafka error: {message}")]
     Kafka { message: String },
 }
