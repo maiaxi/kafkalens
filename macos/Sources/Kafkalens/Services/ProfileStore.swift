@@ -2,12 +2,15 @@ import Foundation
 import Observation
 
 /// Saved connections and the folders grouping them, persisted as JSON in
-/// UserDefaults.
+/// UserDefaults. Folders keep the order the user gives them.
 @MainActor
 @Observable
 final class ProfileStore {
     private static let profilesKey = "connectionProfiles"
     private static let foldersKey = "connectionFolders"
+    /// Set once folders follow the user's order. Before that they were shown
+    /// sorted by name, so they are sorted once to keep their places.
+    private static let foldersOrderedKey = "connectionFoldersOrdered"
 
     private(set) var profiles: [ConnectionProfile] = []
     private(set) var folders: [ConnectionFolder] = []
@@ -15,6 +18,11 @@ final class ProfileStore {
     init() {
         profiles = Self.load(Self.profilesKey) ?? []
         folders = Self.load(Self.foldersKey) ?? []
+        if !UserDefaults.standard.bool(forKey: Self.foldersOrderedKey) {
+            folders.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            persistFolders()
+            UserDefaults.standard.set(true, forKey: Self.foldersOrderedKey)
+        }
     }
 
     func profiles(in folderID: ConnectionFolder.ID?) -> [ConnectionProfile] {
@@ -61,7 +69,6 @@ final class ProfileStore {
     func addFolder(named name: String) -> ConnectionFolder {
         let folder = ConnectionFolder(name: name)
         folders.append(folder)
-        sortFolders()
         persistFolders()
         return folder
     }
@@ -69,7 +76,6 @@ final class ProfileStore {
     func rename(_ folderID: ConnectionFolder.ID, to name: String) {
         guard let index = folders.firstIndex(where: { $0.id == folderID }) else { return }
         folders[index].name = name
-        sortFolders()
         persistFolders()
     }
 
@@ -89,6 +95,28 @@ final class ProfileStore {
         id.flatMap { id in folders.first { $0.id == id } }
     }
 
+    /// Moves folder `id` next to `target` (before it, or after with `after`),
+    /// or to the end when `target` is nil.
+    func moveFolder(_ id: ConnectionFolder.ID, nextTo target: ConnectionFolder.ID?, after: Bool) {
+        guard target != id, let from = folders.firstIndex(where: { $0.id == id }) else { return }
+        let folder = folders.remove(at: from)
+        if let target, let index = folders.firstIndex(where: { $0.id == target }) {
+            folders.insert(folder, at: after ? index + 1 : index)
+        } else {
+            folders.append(folder)
+        }
+        persistFolders()
+    }
+
+    /// Moves folder `id` one place up (`-1`) or down (`1`).
+    func shiftFolder(_ id: ConnectionFolder.ID, by offset: Int) {
+        guard let from = folders.firstIndex(where: { $0.id == id }),
+              folders.indices.contains(from + offset)
+        else { return }
+        folders.swapAt(from, from + offset)
+        persistFolders()
+    }
+
     /// Removes the folder; its connections move to the top level.
     func deleteFolder(_ folderID: ConnectionFolder.ID) {
         folders.removeAll { $0.id == folderID }
@@ -100,10 +128,6 @@ final class ProfileStore {
     }
 
     // MARK: Persistence
-
-    private func sortFolders() {
-        folders.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
 
     private func persistProfiles() {
         Self.store(profiles, Self.profilesKey)
