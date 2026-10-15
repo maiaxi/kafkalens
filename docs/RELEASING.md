@@ -1,13 +1,19 @@
 # Releasing
 
 Releases are built by [`.github/workflows/release.yml`](../.github/workflows/release.yml)
-when a `v*` tag is pushed. The workflow produces a universal (Apple Silicon +
-Intel) `Kafkalens.app`, zips it, and creates a **draft** GitHub release with
-the zip and its SHA-256. Review the draft, then publish it by hand.
+when a `v*` tag is pushed. It builds, in parallel:
+
+- macOS: a universal (Apple Silicon + Intel) `Kafkalens.app`, zipped;
+- Windows: a portable `.exe` (static C runtime, nothing to install);
+- Linux: a `.tar.gz` with the binary, icon, `.desktop` file and install notes;
+
+then creates a **draft** GitHub release with all of them and their SHA-256
+checksums. Review the draft, then publish it by hand.
 
 ## Cutting a release
 
-1. Bump `version` in `core/Cargo.toml` (the app version is read from there).
+1. Bump `version` under `[workspace.package]` in the root `Cargo.toml`; every
+   app (macOS, Windows, Linux) and the core use it.
 2. Commit, then tag and push:
 
    ```sh
@@ -18,7 +24,11 @@ the zip and its SHA-256. Review the draft, then publish it by hand.
    The workflow fails if the tag and the crate version differ.
 3. Open the draft on the Releases page, edit the notes, publish.
 
-To build the same artifact locally: `scripts/bundle-app.sh --universal`.
+To check a release before tagging, run the workflow by hand (Actions →
+Release → Run workflow): it does the same builds and uploads them as
+workflow artifacts without creating a release. Locally, the macOS app is
+`scripts/bundle-app.sh --universal`; the Windows/Linux app is
+`cargo build --release -p kafkalens-desktop` on that system.
 
 ## Signing
 

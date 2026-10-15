@@ -1,6 +1,6 @@
 [package]
 name = "kafkalens-desktop"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Kafkalens for Windows and Linux (Slint UI over kafkalens-core)"
 license = "MIT OR Apache-2.0"

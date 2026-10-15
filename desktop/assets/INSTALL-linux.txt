@@ -1,0 +1,14 @@
+Kafkalens for Linux (x86_64)
+
+Run it straight from this folder:
+
+    ./kafkalens
+
+To add it to your applications menu:
+
+    install -Dm755 kafkalens ~/.local/bin/kafkalens
+    install -Dm644 kafkalens.png ~/.local/share/icons/hicolor/512x512/apps/kafkalens.png
+    install -Dm644 kafkalens.desktop ~/.local/share/applications/kafkalens.desktop
+
+Needs fontconfig and xkbcommon (present on desktop distributions). Saved
+passwords use the Secret Service (GNOME Keyring, KWallet).

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Kafkalens
+Comment=Desktop viewer for Kafka topics
+Exec=kafkalens
+Icon=kafkalens
+Categories=Development;Network;
+Terminal=false

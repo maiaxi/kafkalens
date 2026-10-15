@@ -1,11 +1,12 @@
 name: Release
 
-# Pushing a tag such as v0.1.0 builds the universal macOS app and creates a
-# *draft* GitHub release with it, to review and publish by hand. Running it
-# by hand (workflow_dispatch) does the same build and uploads the zip as a
-# workflow artifact instead, to check a release before tagging.
+# Pushing a tag such as v0.1.0 builds the app for macOS (universal), Windows
+# (portable .exe) and Linux, and creates a *draft* GitHub release with all of
+# them, to review and publish by hand. Running it by hand (workflow_dispatch)
+# does the same builds and uploads them as workflow artifacts instead, to
+# check a release before tagging.
 #
-# The app is signed with the certificate in MACOS_CERTIFICATE_P12 (a
+# The macOS app is signed with the certificate in MACOS_CERTIFICATE_P12 (a
 # self-signed one today, see docs/RELEASING.md) and notarized only when Apple
 # credentials exist. Without any secrets it is ad-hoc signed.
 on:
@@ -17,10 +18,29 @@ permissions:
   contents: write
 
 jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version and check it matches the tag
+        id: version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match the workspace version ${version} in Cargo.toml"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
   macos:
     name: macOS universal app
+    needs: version
     runs-on: macos-15
     env:
+      VERSION: ${{ needs.version.outputs.version }}
       HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
       HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' }}
     steps:
@@ -29,15 +49,6 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
-
-      - name: Check tag matches the crate version
-        run: |
-          version="$(sed -n 's/^version = "\(.*\)"/\1/p' core/Cargo.toml | head -1)"
-          if [[ "$GITHUB_REF_TYPE" == "tag" && "${GITHUB_REF_NAME}" != "v${version}" ]]; then
-            echo "::error::tag ${GITHUB_REF_NAME} does not match core/Cargo.toml version ${version}"
-            exit 1
-          fi
-          echo "VERSION=${version}" >> "$GITHUB_ENV"
 
       - name: Import signing certificate
         if: env.HAS_SIGNING == 'true'
@@ -77,34 +88,113 @@ jobs:
 
       - name: Package
         run: |
+          mkdir -p release
           asset="Kafkalens-${VERSION}-macos-universal.zip"
-          ditto -c -k --keepParent dist/Kafkalens.app "dist/$asset"
-          (cd dist && shasum -a 256 "$asset" > "$asset.sha256")
-          echo "ASSET=$asset" >> "$GITHUB_ENV"
+          ditto -c -k --keepParent dist/Kafkalens.app "release/$asset"
+          (cd release && shasum -a 256 "$asset" > "$asset.sha256")
 
-      - name: Upload build (manual runs)
-        if: github.ref_type != 'tag'
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ASSET }}
-          path: |
-            dist/${{ env.ASSET }}
-            dist/${{ env.ASSET }}.sha256
+          name: release-macos
+          path: release/
+
+  windows:
+    name: Windows portable app
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The vendored OpenSSL build uses NASM for its assembly on Windows.
+      - uses: ilammy/setup-nasm@v1
+
+      - name: Build
+        run: cargo build --release -p kafkalens-desktop
+
+      # A single self-contained .exe (static C runtime), shipped as is.
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p release
+          asset="Kafkalens-${VERSION}-windows-x64.exe"
+          cp target/release/kafkalens.exe "release/$asset"
+          (cd release && sha256sum "$asset" > "$asset.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: release/
+
+  linux:
+    name: Linux app
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Build
+        run: cargo build --release -p kafkalens-desktop
+
+      - name: Package
+        run: |
+          name="Kafkalens-${VERSION}-linux-x64"
+          mkdir -p "dist/$name" release
+          cp target/release/kafkalens "dist/$name/"
+          cp desktop/assets/kafkalens.png desktop/assets/kafkalens.desktop "dist/$name/"
+          cp desktop/assets/INSTALL-linux.txt "dist/$name/INSTALL.txt"
+          tar -czf "release/$name.tar.gz" -C dist "$name"
+          (cd release && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: release/
+
+  release:
+    name: Draft release
+    if: github.ref_type == 'tag'
+    needs: [version, macos, windows, linux]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
 
       - name: Create draft release
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if [[ "$HAS_NOTARIZATION" == "true" ]]; then
-            notes="Signed with Developer ID and notarized by Apple."
+            macos_note="Signed with Developer ID and notarized by Apple."
           else
-            notes="**Not notarized by Apple.** macOS will block the first launch: open System Settings → Privacy & Security and click *Open Anyway*, or run \`xattr -dr com.apple.quarantine /Applications/Kafkalens.app\`."
+            macos_note="Not notarized by Apple: macOS blocks the first launch. Open System Settings → Privacy & Security and click *Open Anyway*, or run \`xattr -dr com.apple.quarantine /Applications/Kafkalens.app\`."
           fi
-          gh release create "$GITHUB_REF_NAME" \
-            "dist/$ASSET" "dist/$ASSET.sha256" \
+          cat > notes.md <<NOTES
+          ### Downloads
+          - **macOS** (Apple Silicon and Intel, macOS 14 or later): \`Kafkalens-${VERSION}-macos-universal.zip\`. Unzip and move Kafkalens.app to Applications. ${macos_note}
+          - **Windows** (x64): \`Kafkalens-${VERSION}-windows-x64.exe\`, a portable app with nothing to install. Not code-signed: SmartScreen shows a warning the first time; click *More info* → *Run anyway*.
+          - **Linux** (x64): \`Kafkalens-${VERSION}-linux-x64.tar.gz\`. Extract and run \`./kafkalens\`; INSTALL.txt explains adding it to the applications menu.
+
+          Each file has a \`.sha256\` checksum next to it.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" release/* \
             --draft --generate-notes \
             --title "Kafkalens ${VERSION}" \
-            --notes "Universal app for Apple Silicon and Intel Macs, macOS 14 or later.
-
-          ${notes}"
+            --notes-file notes.md
