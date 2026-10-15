@@ -31,18 +31,26 @@ to follow on the same core.
 
 ## Install
 
-Download the latest `Kafkalens-<version>-macos-universal.zip` from
-[Releases](https://github.com/maiaxi/kafkalens/releases), unzip it and move
-`Kafkalens.app` to Applications. It runs on macOS 14 or later, on Apple
-Silicon and Intel.
+Download the latest release for your system from
+[Releases](https://github.com/maiaxi/kafkalens/releases).
 
-Releases are not notarized by Apple, so macOS blocks the first launch of
-each downloaded version. Open System Settings → Privacy & Security and click
-**Open Anyway**, or run:
+**macOS** (14 or later, Apple Silicon and Intel): unzip
+`Kafkalens-<version>-macos-universal.zip` and move `Kafkalens.app` to
+Applications. Releases are not notarized by Apple, so macOS blocks the first
+launch of each downloaded version. Open System Settings → Privacy & Security
+and click **Open Anyway**, or run:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Kafkalens.app
 ```
+
+**Windows** (x64): `Kafkalens-<version>-windows-x64.exe` is a portable app;
+there is nothing to install. It is not code-signed, so SmartScreen warns the
+first time: click **More info** → **Run anyway**.
+
+**Linux** (x64): extract `Kafkalens-<version>-linux-x64.tar.gz` and run
+`./kafkalens`. `INSTALL.txt` inside explains adding it to the applications
+menu.
 
 ## Architecture
 
@@ -50,6 +58,7 @@ xattr -dr com.apple.quarantine /Applications/Kafkalens.app
 kafkalens/
 ├── core/      # Rust crate (kafkalens-core): Kafka access, UI-agnostic
 ├── macos/     # Native SwiftUI app, talks to the core via UniFFI
+├── desktop/   # Windows and Linux app (Slint), calls the core directly
 ├── scripts/   # Build, binding generation, packaging, dev setup
 └── docs/      # Release process
 ```
@@ -60,7 +69,8 @@ kafkalens/
   [UniFFI](https://github.com/mozilla/uniffi-rs), so every frontend shows
   messages the same way.
 - **macOS (SwiftUI)**: native frontend that calls the core in-process.
-- **Windows / Linux**: future frontends built on the same core.
+- **Windows / Linux (Slint)**: `desktop/`, a [Slint](https://slint.dev) UI
+  that calls the core directly, with the same layout as the macOS app.
 
 ## Building from source
 
@@ -111,6 +121,11 @@ See [docs/RELEASING.md](docs/RELEASING.md).
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
 [MIT license](LICENSE-MIT), at your option.
+
+The Windows and Linux app is built with [Slint](https://slint.dev), used under
+the Slint Royalty-free Desktop License; as it asks, the app's About window
+shows the "Made with Slint" attribution. Its icons are from
+[Lucide](https://lucide.dev) (ISC).
 
 Apache Kafka is a trademark of The Apache Software Foundation. Kafkalens is
 not affiliated with or endorsed by the ASF.

@@ -1,0 +1,225 @@
+// Sheet for producing one message, as on macOS. Rust owns validation and
+// sending; the sheet only edits fields and reports intent.
+
+import { Button, ComboBox, LineEdit, Palette, ScrollView, Switch, TextEdit } from "std-widgets.slint";
+import { Badge, Divider, FormRow } from "common.slint";
+import { PropertyItem, Sheet, SheetTitle } from "editor.slint";
+
+export component ProduceSheet inherits Sheet {
+    in property <string> topic;
+    in property <string> connection;
+    // Name of the folder that asks for confirmation; "" for none.
+    in property <string> confirm-folder;
+    in property <[string]> partition-names;
+    in-out property <int> partition-index;
+    in-out property <string> key;
+    in-out property <int> key-encoding-index;
+    in-out property <bool> tombstone;
+    in-out property <string> value;
+    in-out property <int> value-encoding-index;
+    // Why the value cannot be sent; "" when fine.
+    in property <string> value-problem;
+    in property <[PropertyItem]> headers;
+    in property <bool> sending;
+    in property <string> result;
+    in property <bool> result-ok;
+    in property <int> sent-count;
+    in property <bool> confirming;
+
+    callback send();
+    callback confirm();
+    callback cancel-confirm();
+    callback close();
+    callback format-value();
+    callback value-edited();
+    callback add-header();
+    callback remove-header(int);
+    callback header-edited(int, string, string);
+
+    card-width: 640px;
+    card-height: 720px;
+
+    VerticalLayout {
+        HorizontalLayout {
+            padding: 16px;
+            spacing: 8px;
+            Badge {
+                source: @image-url("icons/send.svg");
+                size: 16px;
+                colorize: Palette.foreground;
+            }
+            SheetTitle {
+                text: "Produce to " + root.topic;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            if root.confirm-folder != "": Badge {
+                source: @image-url("icons/shield-alert.svg");
+                colorize: #f59e0b;
+            }
+            if root.confirm-folder != "": Text {
+                text: root.confirm-folder;
+                color: #f59e0b;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.connection;
+                vertical-alignment: center;
+                color: Palette.foreground.with-alpha(0.55);
+            }
+        }
+        Divider { height: 1px; }
+
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                alignment: start;
+
+                FormRow {
+                    label: "Partition";
+                    ComboBox {
+                        model: root.partition-names;
+                        current-index <=> root.partition-index;
+                    }
+                }
+
+                Divider { height: 1px; }
+                FormRow {
+                    label: "Key";
+                    ComboBox {
+                        width: 110px;
+                        model: ["Text", "JSON", "Hex"];
+                        current-index <=> root.key-encoding-index;
+                    }
+                    LineEdit {
+                        text <=> root.key;
+                        placeholder-text: "Empty sends a null key";
+                    }
+                }
+
+                Divider { height: 1px; }
+                FormRow {
+                    label: "Tombstone (null value)";
+                    Switch {
+                        checked <=> root.tombstone;
+                        toggled => { root.value-edited(); }
+                    }
+                }
+                if !root.tombstone: FormRow {
+                    label: "Value";
+                    ComboBox {
+                        width: 110px;
+                        model: ["Text", "JSON", "Hex"];
+                        current-index <=> root.value-encoding-index;
+                        selected => { root.value-edited(); }
+                    }
+                    if root.value-encoding-index == 1: Button {
+                        text: "Format";
+                        enabled: root.value-problem == "";
+                        clicked => { root.format-value(); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                if !root.tombstone: TextEdit {
+                    text <=> root.value;
+                    height: 220px;
+                    font-size: 12px;
+                    edited => { root.value-edited(); }
+                }
+                if !root.tombstone && root.value-problem != "": Text {
+                    text: root.value-problem;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                    color: root.value == "" ? Palette.foreground.with-alpha(0.55) : #f59e0b;
+                }
+
+                Divider { height: 1px; }
+                Text { text: "Headers"; font-weight: 600; }
+                for header[index] in root.headers: HorizontalLayout {
+                    spacing: 6px;
+                    LineEdit {
+                        text: header.key;
+                        placeholder-text: "key";
+                        edited(text) => { root.header-edited(index, text, header.value); }
+                    }
+                    LineEdit {
+                        text: header.value;
+                        placeholder-text: "value";
+                        edited(text) => { root.header-edited(index, header.key, text); }
+                    }
+                    Button {
+                        text: "Remove";
+                        clicked => { root.remove-header(index); }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        text: "+ Header";
+                        clicked => { root.add-header(); }
+                    }
+                }
+            }
+        }
+
+        Divider { height: 1px; }
+        HorizontalLayout {
+            padding: 12px;
+            spacing: 8px;
+            Text {
+                text: root.result;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+                color: root.result-ok ? #22c55e : #ef4444;
+            }
+            Button {
+                text: root.sent-count > 0 ? "Done" : "Cancel";
+                clicked => { root.close(); }
+            }
+            Button {
+                text: root.sending ? "Producing…" : "Produce";
+                primary: true;
+                enabled: !root.sending && (root.tombstone || root.value-problem == "");
+                clicked => { root.send(); }
+            }
+        }
+    }
+
+    // Protected folders ask before every message.
+    // Drawn over the card this sheet's content sits in.
+    if root.confirming: Sheet {
+        width: parent.width;
+        height: parent.height;
+        card-width: 440px;
+        card-height: 180px;
+        VerticalLayout {
+            padding: 16px;
+            spacing: 10px;
+            SheetTitle {
+                text: "Produce to “" + root.topic + "” on “" + root.connection + "”?";
+                wrap: word-wrap;
+            }
+            Text {
+                text: "This connection is in “" + root.confirm-folder + "”, which asks for confirmation before every message.";
+                wrap: word-wrap;
+                color: Palette.foreground.with-alpha(0.7);
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                Button {
+                    text: "Cancel";
+                    clicked => { root.cancel-confirm(); }
+                }
+                Button {
+                    text: "Produce";
+                    primary: true;
+                    clicked => { root.confirm(); }
+                }
+            }
+        }
+    }
+}

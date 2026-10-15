@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["core"]
+members = ["core", "desktop"]
+
+# One version for every app (macOS, Windows, Linux) and the core. Releases
+# bump it here; scripts and the release workflow read it from this line.
+[workspace.package]
+version = "0.1.1"
 
 [profile.release]
 lto = true

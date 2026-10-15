@@ -1,0 +1,245 @@
+// Modal sheets drawn over the window: the connection editor and a one-field
+// name prompt (new / rename folder).
+
+import { Button, ComboBox, LineEdit, Palette, ScrollView, Switch } from "std-widgets.slint";
+import { Divider, FormRow } from "common.slint";
+
+export struct PropertyItem {
+    key: string,
+    value: string,
+}
+
+// Dimmed backdrop that swallows clicks, with a centred card.
+export component Sheet inherits Rectangle {
+    in property <length> card-width: 560px;
+    in property <length> card-height: 640px;
+
+    background: #00000080;
+    TouchArea { }
+    Rectangle {
+        width: min(root.card-width, root.width - 40px);
+        height: min(root.card-height, root.height - 40px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Palette.background;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Palette.border;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000066;
+        clip: true;
+        @children
+    }
+}
+
+export component SheetTitle inherits Text {
+    font-size: 15px;
+    font-weight: 700;
+}
+
+export component ConnectionEditor inherits Sheet {
+    in property <string> heading;
+    in-out property <string> name;
+    in-out property <string> servers;
+    // "None" first, then the folders.
+    in property <[string]> folder-names;
+    in-out property <int> folder-index;
+    in-out property <bool> read-only;
+    in-out property <int> security-index;
+    in-out property <int> mechanism-index;
+    in-out property <string> username;
+    in-out property <string> password;
+    in-out property <string> timeout;
+    in property <[PropertyItem]> extra;
+    // 0 nothing yet, 1 testing, 2 succeeded, 3 failed.
+    in property <int> test-state;
+    in property <string> test-message;
+
+    callback save();
+    callback cancel();
+    callback test();
+    callback add-extra();
+    callback remove-extra(int);
+    callback extra-edited(int, string, string);
+
+    property <bool> uses-sasl: root.security-index >= 2;
+    property <bool> valid: root.name != "" && root.servers != "";
+
+    VerticalLayout {
+        HorizontalLayout {
+            padding: 16px;
+            SheetTitle { text: root.heading; }
+        }
+        Divider { height: 1px; }
+
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                alignment: start;
+
+                FormRow {
+                    label: "Name";
+                    LineEdit { text <=> root.name; placeholder-text: "Production EU"; }
+                }
+                FormRow {
+                    label: "Bootstrap servers";
+                    LineEdit { text <=> root.servers; placeholder-text: "host:9092,host2:9092"; }
+                }
+                FormRow {
+                    label: "Folder";
+                    ComboBox {
+                        model: root.folder-names;
+                        current-index <=> root.folder-index;
+                    }
+                }
+
+                FormRow {
+                    label: "Read-only";
+                    Switch { checked <=> root.read-only; }
+                }
+                Text {
+                    text: root.read-only
+                        ? "Messages can only be read. Producing is blocked."
+                        : "Producing messages is allowed on this connection.";
+                    font-size: 11px;
+                    color: root.read-only ? Palette.foreground.with-alpha(0.55) : #f59e0b;
+                }
+
+                Divider { height: 1px; }
+
+                FormRow {
+                    label: "Security protocol";
+                    ComboBox {
+                        model: ["PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"];
+                        current-index <=> root.security-index;
+                    }
+                }
+                if root.uses-sasl: FormRow {
+                    label: "SASL mechanism";
+                    ComboBox {
+                        model: ["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"];
+                        current-index <=> root.mechanism-index;
+                    }
+                }
+                if root.uses-sasl: FormRow {
+                    label: "Username";
+                    LineEdit { text <=> root.username; }
+                }
+                if root.uses-sasl: FormRow {
+                    label: "Password";
+                    LineEdit {
+                        text <=> root.password;
+                        input-type: InputType.password;
+                        placeholder-text: "Stored in the system credential store";
+                    }
+                }
+                FormRow {
+                    label: "Request timeout (ms)";
+                    LineEdit { text <=> root.timeout; input-type: InputType.number; }
+                }
+
+                Divider { height: 1px; }
+
+                Text { text: "librdkafka properties"; font-weight: 600; }
+                Text {
+                    text: "Passed through as-is; they override the settings above (e.g. ssl.ca.location).";
+                    font-size: 11px;
+                    wrap: word-wrap;
+                    color: Palette.foreground.with-alpha(0.55);
+                }
+                for item[index] in root.extra: HorizontalLayout {
+                    spacing: 6px;
+                    LineEdit {
+                        text: item.key;
+                        placeholder-text: "key";
+                        edited(text) => { root.extra-edited(index, text, item.value); }
+                    }
+                    LineEdit {
+                        text: item.value;
+                        placeholder-text: "value";
+                        edited(text) => { root.extra-edited(index, item.key, text); }
+                    }
+                    Button {
+                        text: "Remove";
+                        clicked => { root.remove-extra(index); }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        text: "+ Property";
+                        clicked => { root.add-extra(); }
+                    }
+                }
+            }
+        }
+
+        Divider { height: 1px; }
+        HorizontalLayout {
+            padding: 12px;
+            spacing: 8px;
+            Button {
+                text: root.test-state == 1 ? "Testing…" : "Test Connection";
+                enabled: root.valid && root.test-state != 1;
+                clicked => { root.test(); }
+            }
+            Text {
+                text: root.test-message;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+                color: root.test-state == 2 ? #22c55e : root.test-state == 3 ? #ef4444 : Palette.foreground;
+            }
+            Button {
+                text: "Cancel";
+                clicked => { root.cancel(); }
+            }
+            Button {
+                text: "Save";
+                primary: true;
+                enabled: root.valid;
+                clicked => { root.save(); }
+            }
+        }
+    }
+}
+
+export component NamePrompt inherits Sheet {
+    in property <string> heading;
+    in property <string> accept-label: "OK";
+    in-out property <string> value;
+    callback accept();
+    callback cancel();
+
+    card-width: 380px;
+    card-height: 150px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        SheetTitle { text: root.heading; }
+        field := LineEdit {
+            text <=> root.value;
+            placeholder-text: "Name";
+            accepted => { if root.value != "" { root.accept(); } }
+        }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            Button {
+                text: "Cancel";
+                clicked => { root.cancel(); }
+            }
+            Button {
+                text: root.accept-label;
+                primary: true;
+                enabled: root.value != "";
+                clicked => { root.accept(); }
+            }
+        }
+    }
+
+    init => { field.focus(); }
+}
