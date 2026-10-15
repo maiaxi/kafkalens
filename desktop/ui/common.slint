@@ -13,12 +13,20 @@ export component Divider inherits Rectangle {
     background: Palette.border;
 }
 
+// Selected rows in the side lists are grey, as on macOS, so coloured icons
+// (green server, orange pencil) stay readable; the message table keeps the
+// accent colour.
+export global SideList {
+    out property <brush> selected: Palette.foreground.with-alpha(0.15);
+    out property <brush> hover: Palette.foreground.with-alpha(0.06);
+}
+
 export component SelectableRow inherits Rectangle {
     in property <bool> selected;
     callback clicked();
 
     border-radius: 6px;
-    background: selected ? Palette.accent-background.with-alpha(0.85) : touch.has-hover ? Palette.foreground.with-alpha(0.06) : transparent;
+    background: selected ? SideList.selected : touch.has-hover ? SideList.hover : transparent;
     touch := TouchArea {
         clicked => { root.clicked(); }
     }
@@ -75,14 +83,42 @@ export component IconToggle inherits Rectangle {
     }
 }
 
+// Flat icon button for one-off actions in the toolbar.
+export component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    width: 30px;
+    height: 28px;
+    border-radius: 6px;
+    background: !root.enabled ? transparent
+        : touch.pressed ? Palette.foreground.with-alpha(0.14)
+        : touch.has-hover ? Palette.foreground.with-alpha(0.06) : transparent;
+    Image {
+        source: root.icon;
+        width: 17px;
+        height: 17px;
+        colorize: root.enabled ? Palette.foreground : Palette.foreground.with-alpha(0.3);
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
 // Small coloured glyph (status, permissions) next to a label, centred
 // vertically in its row (an Image alone sits at the top of a layout).
 export component Badge inherits VerticalLayout {
     in property <image> source;
     in property <brush> colorize;
     in property <length> size: 13px;
+    // Raises the icon: next to text it should line up with the letters,
+    // which sit above the centre of the text box (room for descenders).
+    in property <length> lift: 0px;
 
     alignment: center;
+    padding-bottom: root.lift;
     Image {
         source: root.source;
         colorize: root.colorize;
@@ -102,4 +138,137 @@ export component FormRow inherits HorizontalLayout {
         color: Palette.foreground.with-alpha(0.75);
     }
     @children
+}
+
+// Segmented control (Messages / Partitions, Auto / Text / JSON / Hex).
+export component Segmented inherits Rectangle {
+    in property <[string]> items;
+    in-out property <int> current;
+    callback changed(int);
+
+    height: 28px;
+    border-radius: 7px;
+    background: Palette.foreground.with-alpha(0.07);
+    HorizontalLayout {
+        padding: 2px;
+        spacing: 2px;
+        for item[index] in root.items: Rectangle {
+            border-radius: 5px;
+            background: index == root.current ? Palette.foreground.with-alpha(0.17)
+                : touch.has-hover ? Palette.foreground.with-alpha(0.05) : transparent;
+            min-width: label.preferred-width + 24px;
+            label := Text {
+                text: item;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                color: index == root.current ? Palette.foreground : Palette.foreground.with-alpha(0.65);
+            }
+            touch := TouchArea {
+                clicked => {
+                    root.current = index;
+                    root.changed(index);
+                }
+            }
+        }
+    }
+}
+
+// Row in a dropdown menu; `checked` shows a tick for toggles.
+export component MenuRow inherits Rectangle {
+    in property <string> text;
+    in property <bool> checkable;
+    in property <bool> checked;
+    callback clicked();
+
+    height: 28px;
+    border-radius: 5px;
+    background: touch.has-hover ? Palette.accent-background : transparent;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 12px;
+        spacing: 6px;
+        if root.checkable: Badge {
+            source: @image-url("icons/check.svg");
+            size: 13px;
+            colorize: root.checked ? (touch.has-hover ? Palette.accent-foreground : Palette.foreground) : transparent;
+        }
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            color: touch.has-hover ? Palette.accent-foreground : Palette.foreground;
+        }
+    }
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// Toolbar button that opens a dropdown with its children (MenuRows).
+export component MenuButton inherits Rectangle {
+    in property <image> icon;
+    in property <length> menu-width: 230px;
+
+    width: 44px;
+    height: 28px;
+    border-radius: 6px;
+    background: touch.pressed ? Palette.foreground.with-alpha(0.14)
+        : touch.has-hover ? Palette.foreground.with-alpha(0.06) : transparent;
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 4px;
+        spacing: 2px;
+        alignment: center;
+        Badge { source: root.icon; size: 17px; colorize: Palette.foreground; }
+        Badge { source: @image-url("icons/chevron-down.svg"); size: 10px; colorize: Palette.foreground.with-alpha(0.6); }
+    }
+    touch := TouchArea {
+        clicked => { popup.show(); }
+    }
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: root.menu-width;
+        Rectangle {
+            background: Palette.background;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.border;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #00000055;
+            VerticalLayout {
+                padding: 5px;
+                @children
+            }
+        }
+    }
+}
+
+// Read-only text that can be selected and copied, in a rounded box.
+export component SelectableText inherits Rectangle {
+    in property <string> text;
+    in property <string> font-family;
+    in property <bool> muted;
+
+    background: Palette.foreground.with-alpha(0.05);
+    border-radius: 6px;
+    VerticalLayout {
+        padding: 8px;
+        input := TextInput {
+            text: root.text;
+            read-only: true;
+            single-line: false;
+            wrap: char-wrap;
+            font-family: root.font-family;
+            font-size: 12px;
+            color: root.muted ? Palette.foreground.with-alpha(0.5) : Palette.foreground;
+            selection-background-color: Palette.selection-background;
+            selection-foreground-color: Palette.selection-foreground;
+        }
+    }
+
+    public function copy-all() {
+        input.select-all();
+        input.copy();
+        input.clear-selection();
+    }
 }

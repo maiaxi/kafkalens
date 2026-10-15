@@ -4,8 +4,8 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::store::Profile;
 use crate::{
-    messages, secrets, AppWindow, FolderItem, MessageDetail, RowKind, Shared, SidebarRow, State,
-    TopicItem,
+    messages, produce, secrets, AppWindow, FolderItem, MessageDetail, RowKind, Shared, SidebarRow,
+    State, TopicItem,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,8 +19,9 @@ pub fn show_sidebar(ui: &AppWindow, s: &State) {
     let mut rows = Vec::new();
     let folders = s.store.sorted_folders();
 
-    for folder in &folders {
+    for (index, folder) in folders.iter().enumerate() {
         rows.push(SidebarRow {
+            folder_index: index as i32,
             kind: RowKind::Folder,
             id: folder.id.as_str().into(),
             name: folder.name.as_str().into(),
@@ -38,15 +39,19 @@ pub fn show_sidebar(ui: &AppWindow, s: &State) {
         }
     }
 
-    let ungrouped = s.store.connections_in(None);
-    if !ungrouped.is_empty() || folders.is_empty() {
-        rows.push(SidebarRow {
-            kind: RowKind::Heading,
-            name: "CONNECTIONS".into(),
-            ..SidebarRow::default()
-        });
-        rows.extend(ungrouped.into_iter().map(|p| connection_row(s, p, false)));
-    }
+    // Always shown, even with every connection in a folder: dropping a
+    // connection on it takes it out of its folder.
+    rows.push(SidebarRow {
+        kind: RowKind::Heading,
+        name: "CONNECTIONS".into(),
+        ..SidebarRow::default()
+    });
+    rows.extend(
+        s.store
+            .connections_in(None)
+            .into_iter()
+            .map(|p| connection_row(s, p, false)),
+    );
 
     let folder_items: Vec<FolderItem> = folders
         .iter()
@@ -83,7 +88,7 @@ fn connection_row(s: &State, profile: &Profile, indented: bool) -> SidebarRow {
 
 /// Opens a connection to `id`, replacing the current one.
 pub fn connect(ui: &AppWindow, state: &Shared, id: &str) {
-    let (config, generation, servers, hide_unreadable) = {
+    let (config, generation, name, servers, hide_unreadable) = {
         let mut s = state.lock().unwrap();
         let Some(profile) = s.store.profile(id).cloned() else {
             return;
@@ -100,15 +105,18 @@ pub fn connect(ui: &AppWindow, state: &Shared, id: &str) {
         s.statuses.insert(profile.id.clone(), Status::Connecting);
         show_sidebar(ui, &s);
         show_topics(ui, &s);
-        messages::show_messages(ui, &s);
+        messages::show_messages(ui, &mut s);
+        produce::update_flags(ui, &s);
         (
             profile.config(password),
             s.generation,
+            profile.name,
             profile.bootstrap_servers,
             profile.hide_unreadable_topics,
         )
     };
 
+    ui.set_connection_name(name.into());
     ui.set_selected_topic(SharedString::new());
     ui.set_connected(false);
     ui.set_hide_unreadable(hide_unreadable);
@@ -147,6 +155,7 @@ pub fn connect(ui: &AppWindow, state: &Shared, id: &str) {
             }
             show_sidebar(&ui, &s);
             show_topics(&ui, &s);
+            produce::update_flags(&ui, &s);
         });
     });
 }
@@ -158,10 +167,12 @@ pub fn disconnect(ui: &AppWindow, s: &mut State) {
     s.active = None;
     ui.set_connected(false);
     ui.set_selected_topic(SharedString::new());
+    ui.set_connection_name(SharedString::new());
     ui.set_connection_status(SharedString::new());
     ui.set_status_text("Select a connection.".into());
     show_topics(ui, s);
     messages::show_messages(ui, s);
+    produce::update_flags(ui, s);
 }
 
 fn clear_session(s: &mut State) {
@@ -172,6 +183,7 @@ fn clear_session(s: &mut State) {
     s.topics.clear();
     s.selected_topic = None;
     s.messages.clear();
+    s.fetch_summary.clear();
 }
 
 pub fn show_topics(ui: &AppWindow, s: &State) {
@@ -202,10 +214,34 @@ pub fn show_topics(ui: &AppWindow, s: &State) {
         .collect();
 
     ui.set_topics(ModelRc::new(VecModel::from(items)));
-    ui.set_hidden_topics_note(if hidden > 0 {
-        format!("{hidden} without read access hidden").into()
-    } else {
-        SharedString::new()
+    ui.set_hidden_topics_count(hidden as i32);
+}
+
+/// Lists the topics again, e.g. after topics were created elsewhere.
+pub fn refresh_topics(ui: &AppWindow, state: &Shared) {
+    let (client, generation) = {
+        let s = state.lock().unwrap();
+        let Some(client) = s.client.clone() else { return };
+        (client, s.generation)
+    };
+    let (weak, state) = (ui.as_weak(), state.clone());
+    std::thread::spawn(move || {
+        let result = client.list_topics();
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            let mut s = state.lock().unwrap();
+            if s.generation != generation {
+                return;
+            }
+            match result {
+                Ok(topics) => {
+                    ui.set_connection_status(format!("{} topics", topics.len()).into());
+                    s.topics = topics;
+                    show_topics(&ui, &s);
+                    produce::update_flags(&ui, &s);
+                }
+                Err(err) => ui.set_connection_status(format!("Refresh failed: {err}").into()),
+            }
+        });
     });
 }
 
@@ -214,9 +250,15 @@ pub fn select_topic(ui: &AppWindow, state: &Shared, topic: &str) {
         let mut s = state.lock().unwrap();
         s.selected_topic = Some(topic.to_string());
         s.messages.clear();
-        messages::show_messages(ui, &s);
+        s.fetch_summary.clear();
+        messages::show_messages(ui, &mut s);
+        produce::update_flags(ui, &s);
+        let partitions = s.topics.iter().find(|t| t.name == topic).map_or(0, |t| t.partition_count);
+        messages::set_partition_names(ui, partitions);
     }
     ui.set_selected_topic(topic.into());
     ui.set_detail(MessageDetail::default());
+    messages::show_partitions(ui, &[]);
+    messages::load_partitions(ui, state, topic);
     messages::fetch(ui, state);
 }

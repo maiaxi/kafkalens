@@ -5,6 +5,7 @@
 
 mod editor;
 mod messages;
+mod produce;
 mod secrets;
 mod sidebar;
 mod store;
@@ -12,7 +13,7 @@ mod store;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use kafkalens_core::{KafkaClient, KafkaMessage, TopicSummary};
+use kafkalens_core::{KafkaClient, KafkaMessage, PayloadFormat, TopicSummary};
 
 use crate::store::{Layout, Profile, Store};
 
@@ -35,9 +36,19 @@ pub struct State {
     /// In the table's current order.
     pub messages: Vec<KafkaMessage>,
     pub sort: messages::Sort,
+    /// Lowercased search query; empty shows everything.
+    pub search: String,
+    /// Indices into `messages` of the rows the table shows.
+    pub visible: Vec<usize>,
+    /// Selected table row, to re-render it when the format changes.
+    pub selected_row: Option<usize>,
+    pub inspector_format: PayloadFormat,
+    /// Timing and partial-result note of the last fetch, for the status bar.
+    pub fetch_summary: String,
 
     pub editor: Option<editor::Editor>,
     pub prompt: Option<editor::Prompt>,
+    pub produce: Option<produce::Produce>,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -61,8 +72,14 @@ fn main() -> Result<(), slint::PlatformError> {
         selected_topic: None,
         messages: Vec::new(),
         sort: messages::Sort::default(),
+        search: String::new(),
+        visible: Vec::new(),
+        selected_row: None,
+        inspector_format: PayloadFormat::Auto,
+        fetch_summary: String::new(),
         editor: None,
         prompt: None,
+        produce: None,
     }));
     sidebar::show_sidebar(&ui, &state.lock().unwrap());
     ui.set_status_text("Select a connection.".into());
@@ -70,6 +87,7 @@ fn main() -> Result<(), slint::PlatformError> {
     wire_sidebar(&ui, &state);
     wire_editor(&ui, &state);
     wire_topics_and_messages(&ui, &state);
+    wire_produce(&ui, &state);
 
     open_from_env(&ui, &state);
     ui.run()?;
@@ -166,6 +184,20 @@ fn wire_sidebar(ui: &AppWindow, state: &Shared) {
         sidebar::show_sidebar(&ui, &s);
     }));
 
+    ui.on_move_folder(handler!(ui, state, |ui, state, id, target, after| {
+        let mut s = state.lock().unwrap();
+        s.store.move_folder(&id, (!target.is_empty()).then_some(target.as_str()), after);
+        s.store.save();
+        sidebar::show_sidebar(&ui, &s);
+    }));
+
+    ui.on_shift_folder(handler!(ui, state, |ui, state, id, by| {
+        let mut s = state.lock().unwrap();
+        s.store.shift_folder(&id, by as isize);
+        s.store.save();
+        sidebar::show_sidebar(&ui, &s);
+    }));
+
     ui.on_prompt_accept(handler!(ui, state, |ui, state| editor::accept_prompt(
         &ui, state
     )));
@@ -217,6 +249,10 @@ fn wire_topics_and_messages(ui: &AppWindow, state: &Shared) {
         sidebar::show_topics(&ui, &s);
     }));
 
+    ui.on_search_changed(handler!(ui, state, |ui, state, query| messages::search(&ui, state, &query)));
+    ui.on_format_changed(handler!(ui, state, |ui, state, index| messages::set_format(&ui, state, index)));
+    ui.on_refresh_topics(handler!(ui, state, |ui, state| sidebar::refresh_topics(&ui, state)));
+
     ui.on_select_topic(handler!(ui, state, |ui, state, topic| {
         sidebar::select_topic(&ui, state, &topic)
     }));
@@ -227,6 +263,35 @@ fn wire_topics_and_messages(ui: &AppWindow, state: &Shared) {
     ui.on_sort_messages(handler!(ui, state, |ui, state, column| messages::sort_by(
         &ui, state, column
     )));
+}
+
+fn wire_produce(ui: &AppWindow, state: &Shared) {
+    ui.on_produce_new(handler!(ui, state, |ui, state| produce::open_new(
+        &ui, state
+    )));
+    ui.on_produce_duplicate(handler!(ui, state, |ui, state, row| {
+        produce::open_duplicate(&ui, state, row.max(0) as usize)
+    }));
+    ui.on_produce_send(handler!(ui, state, |ui, state| produce::send(&ui, state)));
+    ui.on_produce_confirm(handler!(ui, state, |ui, state| produce::confirm(
+        &ui, state
+    )));
+    ui.on_produce_cancel_confirm(handler!(ui, state, |ui, _state| ui.set_produce_confirming(false)));
+    ui.on_produce_close(handler!(ui, state, |ui, state| produce::close(&ui, state)));
+    ui.on_produce_format_value(handler!(ui, state, |ui, _state| {
+        produce::format_value(&ui);
+        produce::validate(&ui);
+    }));
+    ui.on_produce_value_edited(handler!(ui, state, |ui, _state| produce::validate(&ui)));
+    ui.on_produce_add_header(handler!(ui, state, |ui, state| produce::add_header(
+        &ui, state
+    )));
+    ui.on_produce_remove_header(handler!(ui, state, |ui, state, index| {
+        produce::remove_header(&ui, state, index.max(0) as usize)
+    }));
+    ui.on_produce_header_edited(handler!(ui, state, |_ui, state, index, key, value| {
+        produce::header_edited(state, index.max(0) as usize, &key, &value)
+    }));
 }
 
 /// Widths are clamped to the splitters' ranges in case the file was edited.
@@ -254,11 +319,23 @@ fn current_layout(ui: &AppWindow) -> Layout {
 
 /// Debug builds only: KAFKALENS_CONNECT=<index> and KAFKALENS_TOPIC=<name>
 /// open a connection and topic at startup, KAFKALENS_ROW=<n> shows that
-/// message in the inspector, and KAFKALENS_EDIT=<index> opens the editor on
-/// that connection, to iterate on the UI quickly.
+/// message in the inspector (KAFKALENS_PRODUCE=open|send|confirm also
+/// duplicates it into the produce sheet and goes that far), KAFKALENS_EDIT=<index> opens the editor on
+/// that connection, KAFKALENS_TAB=1 opens the Partitions tab, and
+/// KAFKALENS_SIZE=<w>x<h> sets the window size, to
+/// iterate on the UI quickly.
 fn open_from_env(ui: &AppWindow, state: &Shared) {
     if !cfg!(debug_assertions) {
         return;
+    }
+    if let Some((w, h)) = std::env::var("KAFKALENS_SIZE").ok().and_then(|v| {
+        let (w, h) = v.split_once('x')?;
+        Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+    }) {
+        ui.window().set_size(slint::LogicalSize::new(w, h));
+    }
+    if let Some(tab) = std::env::var("KAFKALENS_TAB").ok().and_then(|v| v.parse::<i32>().ok()) {
+        ui.set_tab_index(tab);
     }
     if let Some(index) = std::env::var("KAFKALENS_EDIT")
         .ok()
@@ -314,6 +391,15 @@ fn open_from_env(ui: &AppWindow, state: &Shared) {
                     row_shown.set(true);
                     ui.set_current_row(row);
                     ui.invoke_select_message(row);
+                    if let Ok(step) = std::env::var("KAFKALENS_PRODUCE") {
+                        ui.invoke_produce_duplicate(row);
+                        if step == "send" || step == "confirm" {
+                            ui.invoke_produce_send();
+                        }
+                        if step == "confirm" {
+                            ui.invoke_produce_confirm();
+                        }
+                    }
                 }
             }
         },

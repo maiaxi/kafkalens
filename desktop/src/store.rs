@@ -155,20 +155,34 @@ impl Default for Folder {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Store {
+    /// In the order the sidebar shows them, which the user can change.
     pub folders: Vec<Folder>,
     pub connections: Vec<Profile>,
+    /// Files from before folders could be reordered showed them sorted by
+    /// name; they are sorted once on load so nothing moves.
+    pub folders_ordered: bool,
 }
 
 impl Store {
     pub fn load() -> Store {
-        read("connections.json").unwrap_or_else(|| Store {
+        let mut store: Store = read("connections.json").unwrap_or_else(|| Store {
             folders: Vec::new(),
             connections: vec![Profile {
                 name: "Local".into(),
                 bootstrap_servers: "localhost:9092".into(),
                 ..Profile::default()
             }],
-        })
+            folders_ordered: true,
+        });
+        store.adopt_folder_order();
+        store
+    }
+
+    fn adopt_folder_order(&mut self) {
+        if !self.folders_ordered {
+            self.folders.sort_by_key(|f| f.name.to_lowercase());
+            self.folders_ordered = true;
+        }
     }
 
     pub fn save(&self) {
@@ -191,11 +205,33 @@ impl Store {
         self.folders.iter_mut().find(|f| f.id == id)
     }
 
-    /// Folders sorted by name, as the sidebar and menus show them.
+    /// Folders in the user's order, as the sidebar and menus show them.
     pub fn sorted_folders(&self) -> Vec<&Folder> {
-        let mut folders: Vec<&Folder> = self.folders.iter().collect();
-        folders.sort_by_key(|f| f.name.to_lowercase());
-        folders
+        self.folders.iter().collect()
+    }
+
+    /// Moves folder `id` next to `target` (before it, or after with
+    /// `after`), or to the end when `target` is None.
+    pub fn move_folder(&mut self, id: &str, target: Option<&str>, after: bool) {
+        if target == Some(id) {
+            return;
+        }
+        let Some(from) = self.folders.iter().position(|f| f.id == id) else { return };
+        let folder = self.folders.remove(from);
+        let index = match target.and_then(|t| self.folders.iter().position(|f| f.id == t)) {
+            Some(index) => index + after as usize,
+            None => self.folders.len(),
+        };
+        self.folders.insert(index, folder);
+    }
+
+    /// Moves folder `id` one place up (`-1`) or down (`1`).
+    pub fn shift_folder(&mut self, id: &str, by: isize) {
+        let Some(from) = self.folders.iter().position(|f| f.id == id) else { return };
+        let to = from as isize + by;
+        if (0..self.folders.len() as isize).contains(&to) {
+            self.folders.swap(from, to as usize);
+        }
     }
 
     /// Connections in `folder_id` (None: outside any folder), sorted by name.
@@ -369,6 +405,57 @@ mod tests {
             .map(|p| p.name.as_str())
             .collect();
         assert_eq!(top, ["loose", "orphan"]);
+    }
+
+    fn names(store: &Store) -> Vec<&str> {
+        store.folders.iter().map(|f| f.name.as_str()).collect()
+    }
+
+    fn store_with_folders(list: &[&str]) -> Store {
+        Store {
+            folders: list.iter().map(|n| Folder { id: n.to_string(), name: n.to_string(), ..Folder::default() }).collect(),
+            folders_ordered: true,
+            ..Store::default()
+        }
+    }
+
+    #[test]
+    fn older_files_keep_the_alphabetical_folder_order() {
+        let mut store: Store = serde_json::from_str(
+            r#"{"folders":[{"id":"p","name":"Prod"},{"id":"d","name":"dev"}],"connections":[]}"#,
+        )
+        .unwrap();
+        store.adopt_folder_order();
+        assert_eq!(names(&store), ["dev", "Prod"]);
+        // Once ordered, the user's order is kept as is.
+        store.shift_folder("p", -1);
+        store.adopt_folder_order();
+        assert_eq!(names(&store), ["Prod", "dev"]);
+    }
+
+    #[test]
+    fn moves_folders_before_after_and_to_the_end() {
+        let mut store = store_with_folders(&["a", "b", "c", "d"]);
+        store.move_folder("d", Some("b"), false);
+        assert_eq!(names(&store), ["a", "d", "b", "c"]);
+        store.move_folder("a", Some("b"), true);
+        assert_eq!(names(&store), ["d", "b", "a", "c"]);
+        store.move_folder("d", None, false);
+        assert_eq!(names(&store), ["b", "a", "c", "d"]);
+        // Dropping a folder on itself changes nothing.
+        store.move_folder("a", Some("a"), true);
+        assert_eq!(names(&store), ["b", "a", "c", "d"]);
+    }
+
+    #[test]
+    fn shifts_folders_within_bounds() {
+        let mut store = store_with_folders(&["a", "b", "c"]);
+        store.shift_folder("a", -1);
+        assert_eq!(names(&store), ["a", "b", "c"]);
+        store.shift_folder("a", 1);
+        assert_eq!(names(&store), ["b", "a", "c"]);
+        store.shift_folder("c", 1);
+        assert_eq!(names(&store), ["b", "a", "c"]);
     }
 
     #[test]

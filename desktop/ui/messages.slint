@@ -1,7 +1,8 @@
-// Message table and inspector.
+// Fetch bar, message table, partitions table and inspector, laid out as in
+// the macOS app.
 
-import { ListView, Palette, ScrollView } from "std-widgets.slint";
-import { Divider } from "common.slint";
+import { ComboBox, LineEdit, ListView, Palette, ScrollView, Spinner } from "std-widgets.slint";
+import { Badge, Divider, IconButton, Segmented, SelectableText } from "common.slint";
 
 export struct MessageRow {
     partition: string,
@@ -9,6 +10,7 @@ export struct MessageRow {
     timestamp: string,
     key: string,
     value: string,
+    size: string,
     key-null: bool,
     value-null: bool,
 }
@@ -23,59 +25,93 @@ export struct MessageDetail {
     partition: string,
     offset: string,
     timestamp: string,
+    size: string,
+    // "" unless the value uses the Schema Registry wire format.
+    schema-id: string,
     key: string,
     key-format: string,
+    key-null: bool,
     value: string,
     value-format: string,
-    size: string,
+    value-null: bool,
     headers: [HeaderItem],
 }
 
-component Field inherits HorizontalLayout {
-    in property <string> label;
-    in property <string> value;
-    spacing: 12px;
-    Text {
-        text: root.label;
-        width: 80px;
-        color: Palette.foreground.with-alpha(0.55);
-    }
-    Text {
-        text: root.value;
-        horizontal-stretch: 1;
-        overflow: elide;
-    }
+export struct PartitionRow {
+    id: string,
+    leader: string,
+    replicas: string,
+    in-sync: string,
+    under-replicated: bool,
+    low: string,
+    high: string,
+    messages: string,
 }
 
-component Payload inherits VerticalLayout {
-    in property <string> title;
-    in property <string> format;
-    in property <string> text;
-    in property <string> mono-font;
-    spacing: 6px;
+export component FetchBar inherits HorizontalLayout {
+    // 0 latest, 1 beginning, 2 offset, 3 timestamp.
+    in-out property <int> start-index;
+    in-out property <string> start-value;
+    in property <[string]> partition-names;
+    in-out property <int> partition-index;
+    in-out property <int> limit-index;
+    in property <bool> loading;
+    in property <bool> can-fetch;
+    in-out property <string> search;
+    callback fetch();
+    callback search-changed(string);
 
-    HorizontalLayout {
-        spacing: 8px;
-        Text { text: root.title; font-weight: 600; }
-        Text {
-            text: root.format;
-            font-size: 11px;
-            vertical-alignment: center;
-            color: Palette.foreground.with-alpha(0.55);
-        }
+    padding: 10px;
+    spacing: 8px;
+
+    Text { text: "From"; vertical-alignment: center; }
+    ComboBox {
+        width: 120px;
+        model: ["Latest", "Beginning", "Offset", "Timestamp"];
+        current-index <=> root.start-index;
     }
-    Rectangle {
-        background: Palette.foreground.with-alpha(0.05);
-        border-radius: 6px;
-        VerticalLayout {
-            padding: 8px;
-            Text {
-                text: root.text;
-                font-family: root.mono-font;
-                font-size: 12px;
-                wrap: char-wrap;
-            }
-        }
+    if root.start-index == 2: LineEdit {
+        width: 110px;
+        text <=> root.start-value;
+        input-type: InputType.number;
+        placeholder-text: "Offset";
+        accepted => { root.fetch(); }
+    }
+    if root.start-index == 3: LineEdit {
+        width: 160px;
+        text <=> root.start-value;
+        placeholder-text: "YYYY-MM-DD HH:MM";
+        accepted => { root.fetch(); }
+    }
+    Text { text: "Partition"; vertical-alignment: center; }
+    ComboBox {
+        width: 74px;
+        model: root.partition-names;
+        current-index <=> root.partition-index;
+    }
+    Text { text: "Limit"; vertical-alignment: center; }
+    ComboBox {
+        width: 82px;
+        model: ["50", "200", "500", "1000", "5000"];
+        current-index <=> root.limit-index;
+    }
+    IconButton {
+        icon: @image-url("icons/circle-arrow-down.svg");
+        enabled: root.can-fetch && !root.loading;
+        clicked => { root.fetch(); }
+    }
+    if root.loading: Spinner {
+        width: 18px;
+        height: 18px;
+        indeterminate: true;
+    }
+    // Shrinks first when space is short, so the fetch button stays visible.
+    LineEdit {
+        min-width: 0px;
+        horizontal-stretch: 1;
+        text <=> root.search;
+        placeholder-text: "Search key, value or headers";
+        edited(text) => { root.search-changed(text); }
     }
 }
 
@@ -123,16 +159,19 @@ export component MessageTable inherits VerticalLayout {
     in-out property <int> current-row: -1;
     in property <int> sort-column: 2;
     in property <bool> sort-ascending: false;
+    // Writable connection and topic: offer "Duplicate and Edit".
+    in property <bool> can-duplicate;
     callback row-selected(int);
     callback sort(int);
+    callback duplicate(int);
 
     function arrow(column: int) -> string {
         return column != root.sort-column ? "" : root.sort-ascending ? "▲" : "▼";
     }
 
-    // Partition, offset and timestamp are fixed; key and value share the
-    // rest 1:3. Header and rows use the same constraints so they line up.
-    property <[length]> widths: [76px, 76px, 180px];
+    // Partition, offset, timestamp and size are fixed; key and value share
+    // the rest 1:3. Header and rows use the same constraints so they line up.
+    property <[length]> widths: [76px, 90px, 180px, 76px];
 
     Rectangle {
         height: 32px;
@@ -143,13 +182,14 @@ export component MessageTable inherits VerticalLayout {
             HeaderCell { width: widths[1]; title: "Offset"; arrow: arrow(1); clicked => { root.sort(1); } }
             HeaderCell { width: widths[2]; title: "Timestamp"; arrow: arrow(2); clicked => { root.sort(2); } }
             HeaderCell {
-                min-width: 80px; preferred-width: 0; horizontal-stretch: 1;
+                min-width: 70px; preferred-width: 0; horizontal-stretch: 1;
                 title: "Key"; arrow: arrow(3); clicked => { root.sort(3); }
             }
             HeaderCell {
-                min-width: 120px; preferred-width: 0; horizontal-stretch: 3;
+                min-width: 100px; preferred-width: 0; horizontal-stretch: 3;
                 title: "Value"; arrow: arrow(4); clicked => { root.sort(4); }
             }
+            HeaderCell { width: widths[3]; title: "Size"; arrow: arrow(5); clicked => { root.sort(5); } }
         }
     }
     Divider { height: 1px; }
@@ -160,52 +200,170 @@ export component MessageTable inherits VerticalLayout {
             property <bool> selected: index == root.current-row;
             height: 30px;
 
-            Rectangle {
-                x: 6px;
-                width: parent.width - 12px;
-                border-radius: 5px;
-                background: selected ? Palette.accent-background.with-alpha(0.85)
-                    : touch.has-hover ? Palette.foreground.with-alpha(0.07)
-                    : mod(index, 2) == 0 ? Palette.foreground.with-alpha(0.035) : transparent;
-
-                // Same 10px inset as the header cells, so columns line up.
-                HorizontalLayout {
-                    padding-left: 10px;
-                    Cell { width: widths[0]; text: row.partition; selected: selected; }
-                    Cell { width: widths[1]; text: row.offset; selected: selected; }
-                    Cell { width: widths[2]; text: row.timestamp; selected: selected; }
-                    Cell {
-                        min-width: 80px; preferred-width: 0; horizontal-stretch: 1;
-                        text: row.key;
-                        font-family: root.mono-font;
-                        font-size: 12px;
-                        muted: row.key-null;
-                        selected: selected;
-                    }
-                    Cell {
-                        min-width: 120px; preferred-width: 0; horizontal-stretch: 3;
-                        text: row.value;
-                        font-family: root.mono-font;
-                        font-size: 12px;
-                        muted: row.value-null;
-                        selected: selected;
+            // Wraps the row so right-click opens the menu while left-click
+            // still reaches the row's TouchArea.
+            ContextMenuArea {
+                enabled: root.can-duplicate;
+                Menu {
+                    MenuItem {
+                        title: "Duplicate and Edit…";
+                        activated => { root.duplicate(index); }
                     }
                 }
-            }
 
-            touch := TouchArea {
-                clicked => {
-                    root.current-row = index;
-                    root.row-selected(index);
+                Rectangle {
+                    x: 6px;
+                    width: parent.width - 12px;
+                    border-radius: 5px;
+                    background: selected ? Palette.accent-background.with-alpha(0.85)
+                        : touch.has-hover ? Palette.foreground.with-alpha(0.07)
+                        : mod(index, 2) == 0 ? Palette.foreground.with-alpha(0.035) : transparent;
+
+                    // Same 10px inset as the header cells, so columns line up.
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        Cell { width: widths[0]; text: row.partition; selected: selected; }
+                        Cell { width: widths[1]; text: row.offset; selected: selected; }
+                        Cell { width: widths[2]; text: row.timestamp; selected: selected; }
+                        Cell {
+                            min-width: 70px; preferred-width: 0; horizontal-stretch: 1;
+                            text: row.key;
+                            font-family: root.mono-font;
+                            font-size: 12px;
+                            muted: row.key-null;
+                            selected: selected;
+                        }
+                        Cell {
+                            min-width: 100px; preferred-width: 0; horizontal-stretch: 3;
+                            text: row.value;
+                            font-family: root.mono-font;
+                            font-size: 12px;
+                            muted: row.value-null;
+                            selected: selected;
+                        }
+                        Cell {
+                            width: widths[3];
+                            text: row.size;
+                            muted: true;
+                            selected: selected;
+                        }
+                    }
+                }
+
+                touch := TouchArea {
+                    clicked => {
+                        root.current-row = index;
+                        root.row-selected(index);
+                    }
                 }
             }
         }
     }
 }
 
+export component PartitionsTable inherits VerticalLayout {
+    in property <[PartitionRow]> rows;
+
+    property <[string]> titles: ["Partition", "Leader", "Replicas", "In-Sync", "Low", "High", "Messages"];
+
+    Rectangle {
+        height: 32px;
+        HorizontalLayout {
+            padding-left: 6px;
+            padding-right: 6px;
+            for title in root.titles: HeaderCell {
+                horizontal-stretch: 1;
+                preferred-width: 0;
+                title: title;
+            }
+        }
+    }
+    Divider { height: 1px; }
+
+    ListView {
+        vertical-stretch: 1;
+        for row[index] in root.rows: Rectangle {
+            height: 30px;
+            Rectangle {
+                x: 6px;
+                width: parent.width - 12px;
+                border-radius: 5px;
+                background: mod(index, 2) == 0 ? Palette.foreground.with-alpha(0.035) : transparent;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    Cell { horizontal-stretch: 1; preferred-width: 0; text: row.id; }
+                    Cell { horizontal-stretch: 1; preferred-width: 0; text: row.leader; }
+                    Cell { horizontal-stretch: 1; preferred-width: 0; text: row.replicas; }
+                    // Fewer in-sync replicas than replicas: under-replicated.
+                    Cell {
+                        horizontal-stretch: 1;
+                        preferred-width: 0;
+                        text: row.in-sync;
+                        color: row.under-replicated ? #f59e0b : Palette.foreground;
+                    }
+                    Cell { horizontal-stretch: 1; preferred-width: 0; text: row.low; }
+                    Cell { horizontal-stretch: 1; preferred-width: 0; text: row.high; }
+                    Cell { horizontal-stretch: 1; preferred-width: 0; text: row.messages; }
+                }
+            }
+        }
+    }
+}
+
+component Field inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> font-family;
+    spacing: 12px;
+    Text {
+        text: root.label;
+        width: 90px;
+        color: Palette.foreground.with-alpha(0.55);
+    }
+    Text {
+        text: root.value;
+        horizontal-stretch: 1;
+        overflow: elide;
+        font-family: root.font-family;
+    }
+}
+
+component Payload inherits VerticalLayout {
+    in property <string> title;
+    in property <string> format;
+    in property <string> text;
+    in property <bool> null;
+    in property <string> mono-font;
+    spacing: 6px;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Text { text: root.title; font-weight: 600; vertical-alignment: center; }
+        Text {
+            text: root.null ? "null" : root.format;
+            font-size: 11px;
+            vertical-alignment: center;
+            color: Palette.foreground.with-alpha(0.55);
+        }
+        Rectangle { horizontal-stretch: 1; }
+        if !root.null: IconButton {
+            icon: @image-url("icons/copy.svg");
+            clicked => { box.copy-all(); }
+        }
+    }
+    box := SelectableText {
+        text: root.null ? "null" : root.text;
+        muted: root.null;
+        font-family: root.mono-font;
+    }
+}
+
 export component InspectorPane inherits Rectangle {
     in property <MessageDetail> detail;
     in property <string> mono-font;
+    // Auto, Text, JSON, Hex.
+    in-out property <int> format-index;
+    callback format-changed(int);
 
     background: Palette.alternate-background;
 
@@ -230,18 +388,27 @@ export component InspectorPane inherits Rectangle {
                 Field { label: "Offset"; value: root.detail.offset; }
                 Field { label: "Timestamp"; value: root.detail.timestamp; }
                 Field { label: "Size"; value: root.detail.size; }
+                if root.detail.schema-id != "": Field { label: "Schema ID"; value: root.detail.schema-id; }
+            }
+
+            Segmented {
+                items: ["Auto", "Text", "JSON", "Hex"];
+                current <=> root.format-index;
+                changed(index) => { root.format-changed(index); }
             }
 
             Payload {
                 title: "Key";
                 format: root.detail.key-format;
                 text: root.detail.key;
+                null: root.detail.key-null;
                 mono-font: root.mono-font;
             }
             Payload {
                 title: "Value";
                 format: root.detail.value-format;
                 text: root.detail.value;
+                null: root.detail.value-null;
                 mono-font: root.mono-font;
             }
 
@@ -251,6 +418,7 @@ export component InspectorPane inherits Rectangle {
                 for header in root.detail.headers: Field {
                     label: header.key;
                     value: header.value;
+                    font-family: root.mono-font;
                 }
             }
         }

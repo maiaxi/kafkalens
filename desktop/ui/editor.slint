@@ -10,7 +10,7 @@ export struct PropertyItem {
 }
 
 // Dimmed backdrop that swallows clicks, with a centred card.
-component Sheet inherits Rectangle {
+export component Sheet inherits Rectangle {
     in property <length> card-width: 560px;
     in property <length> card-height: 640px;
 
@@ -32,7 +32,7 @@ component Sheet inherits Rectangle {
     }
 }
 
-component SheetTitle inherits Text {
+export component SheetTitle inherits Text {
     font-size: 15px;
     font-weight: 700;
 }

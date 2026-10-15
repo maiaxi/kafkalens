@@ -1,4 +1,4 @@
-import { CheckBox, LineEdit, ListView, Palette } from "std-widgets.slint";
+import { LineEdit, ListView, Palette } from "std-widgets.slint";
 import { Badge, SelectableRow } from "common.slint";
 
 export struct TopicItem {
@@ -12,77 +12,95 @@ export struct TopicItem {
 export component TopicsPane inherits Rectangle {
     in property <[TopicItem]> topics;
     in property <string> selected;
-    in property <string> hidden-note;
-    // Global preference.
-    in-out property <bool> show-internal;
-    // Per connection.
-    in-out property <bool> hide-unreadable;
-    in property <bool> connected;
+    // How many topics are hidden for lack of read access; 0 for none.
+    in property <int> hidden-count;
 
     callback select(string);
     callback filter-changed(string);
-    callback show-internal-toggled(bool);
-    callback hide-unreadable-toggled(bool);
+    callback show-hidden();
 
     VerticalLayout {
-        padding: 10px;
+        padding-top: 10px;
         spacing: 8px;
 
-        LineEdit {
-            placeholder-text: "Filter topics";
-            edited(text) => { root.filter-changed(text); }
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            LineEdit {
+                placeholder-text: "Filter topics";
+                edited(text) => { root.filter-changed(text); }
+            }
         }
 
         ListView {
             vertical-stretch: 1;
-            for topic in root.topics: SelectableRow {
-                height: 30px;
-                selected: topic.name == root.selected;
-                clicked => { root.select(topic.name); }
+            for topic in root.topics: HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                SelectableRow {
+                    height: 30px;
+                    selected: topic.name == root.selected;
+                    clicked => { root.select(topic.name); }
 
-                HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
-                    spacing: 6px;
-                    Text {
-                        text: topic.name;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        color: topic.name == root.selected ? Palette.accent-foreground
-                            : topic.internal || topic.unreadable ? Palette.foreground.with-alpha(0.55) : Palette.foreground;
-                    }
-                    if topic.unreadable: Badge {
-                        source: @image-url("icons/lock.svg");
-                        size: 11px;
-                        colorize: Palette.foreground.with-alpha(0.5);
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    Text {
-                        text: topic.partitions;
-                        vertical-alignment: center;
-                        font-size: 11px;
-                        color: topic.name == root.selected ? Palette.accent-foreground.with-alpha(0.8) : Palette.foreground.with-alpha(0.5);
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 6px;
+                        Text {
+                            text: topic.name;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: topic.internal || topic.unreadable ? Palette.foreground.with-alpha(0.55) : Palette.foreground;
+                        }
+                        if topic.unreadable: Badge {
+                            source: @image-url("icons/lock.svg");
+                            size: 11px;
+                            colorize: Palette.foreground.with-alpha(0.5);
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: topic.partitions;
+                            vertical-alignment: center;
+                            font-size: 11px;
+                            color: Palette.foreground.with-alpha(0.5);
+                        }
                     }
                 }
             }
         }
 
-        if root.hidden-note != "": Text {
-            text: root.hidden-note;
-            font-size: 11px;
-            color: Palette.foreground.with-alpha(0.55);
-        }
-
-        CheckBox {
-            text: "Show internal topics";
-            checked <=> root.show-internal;
-            toggled => { root.show-internal-toggled(self.checked); }
-        }
-        CheckBox {
-            text: "Hide topics without read access";
-            enabled: root.connected;
-            checked <=> root.hide-unreadable;
-            toggled => { root.hide-unreadable-toggled(self.checked); }
+        // As on macOS: a note with a shortcut to show the hidden topics.
+        if root.hidden-count > 0: Rectangle {
+            height: 30px;
+            background: Palette.foreground.with-alpha(0.04);
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 6px;
+                Badge {
+                    source: @image-url("icons/lock.svg");
+                    size: 11px;
+                    colorize: Palette.foreground.with-alpha(0.55);
+                }
+                Text {
+                    text: root.hidden-count + " without read access hidden";
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    color: Palette.foreground.with-alpha(0.6);
+                }
+                Text {
+                    text: "Show";
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    color: Palette.accent-background;
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.show-hidden(); }
+                    }
+                }
+            }
         }
     }
 }

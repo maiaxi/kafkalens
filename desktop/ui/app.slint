@@ -1,30 +1,34 @@
-import { Button, ComboBox, Palette } from "std-widgets.slint";
-import { Divider, IconToggle, Splitter } from "common.slint";
+import { Palette } from "std-widgets.slint";
+import { Badge, Divider, IconButton, IconToggle, MenuButton, MenuRow, Segmented, Splitter } from "common.slint";
 import { ConnectionsPane, FolderItem, RowKind, SidebarRow } from "sidebar.slint";
 import { ConnectionEditor, NamePrompt, PropertyItem } from "editor.slint";
 import { TopicItem, TopicsPane } from "topics.slint";
-import { HeaderItem, InspectorPane, MessageDetail, MessageRow, MessageTable } from "messages.slint";
+import { FetchBar, HeaderItem, InspectorPane, MessageDetail, MessageRow, MessageTable, PartitionRow, PartitionsTable } from "messages.slint";
+import { ProduceSheet } from "produce.slint";
 
 // Re-exported so the Rust side gets these types.
-export { FolderItem, HeaderItem, MessageDetail, MessageRow, PropertyItem, RowKind, SidebarRow, TopicItem }
+export { FolderItem, HeaderItem, MessageDetail, MessageRow, PartitionRow, PropertyItem, RowKind, SidebarRow, TopicItem }
 
 export component AppWindow inherits Window {
     title: "Kafkalens";
     preferred-width: 1440px;
     preferred-height: 820px;
-    min-width: 960px;
+    // Never narrower than the open panes plus the message area's minimum,
+    // or the layout would overflow and clip the toolbar.
+    min-width: root.left-used + root.right-used + root.center-min;
     min-height: 560px;
 
     // Sidebar.
     in property <[SidebarRow]> sidebar-rows;
     in property <[FolderItem]> folders;
     in property <string> selected-connection;
+    in property <string> connection-name;
     in property <string> connection-status;
 
     // Topics.
     in property <[TopicItem]> topics;
     in property <string> selected-topic;
-    in property <string> hidden-topics-note;
+    in property <int> hidden-topics-count;
     in-out property <bool> show-internal;
     in-out property <bool> hide-unreadable: true;
     in property <bool> connected;
@@ -39,7 +43,37 @@ export component AppWindow inherits Window {
     in property <bool> loading;
     in property <string> mono-font: "Menlo";
     in-out property <int> start-index: 0;
+    in-out property <string> start-value;
+    in property <[string]> partition-names: ["All"];
+    in-out property <int> partition-index: 0;
     in-out property <int> limit-index: 1;
+    in-out property <string> search;
+    in-out property <int> format-index: 0;
+    // 0 messages, 1 partitions.
+    in-out property <int> tab-index: 0;
+    in property <[PartitionRow]> partition-rows;
+
+    // Producing. Writable connection (not read-only), and the selected topic
+    // not denied Write by the broker's ACLs.
+    in property <bool> connection-writable;
+    in property <bool> topic-writable: true;
+    in property <bool> produce-open;
+    in property <string> produce-connection;
+    in property <string> produce-confirm-folder;
+    in property <[string]> produce-partition-names;
+    in-out property <int> produce-partition-index;
+    in-out property <string> produce-key;
+    in-out property <int> produce-key-encoding-index;
+    in-out property <bool> produce-tombstone;
+    in-out property <string> produce-value;
+    in-out property <int> produce-value-encoding-index: 1;
+    in property <string> produce-value-problem;
+    in property <[PropertyItem]> produce-headers;
+    in property <bool> produce-sending;
+    in property <string> produce-result;
+    in property <bool> produce-result-ok;
+    in property <int> produce-sent-count;
+    in property <bool> produce-confirming;
 
     // Layout.
     in-out property <length> connections-width: 210px;
@@ -82,6 +116,8 @@ export component AppWindow inherits Window {
     callback rename-folder(string);
     callback toggle-confirm(string);
     callback delete-folder(string);
+    callback move-folder(string, string, bool);
+    callback shift-folder(string, int);
 
     callback editor-save();
     callback editor-cancel();
@@ -97,12 +133,27 @@ export component AppWindow inherits Window {
     callback topic-filter-changed(string);
     callback show-internal-toggled(bool);
     callback hide-unreadable-toggled(bool);
+    callback refresh-topics();
+    callback search-changed(string);
+    callback format-changed(int);
     callback fetch();
     callback select-message(int);
     callback sort-messages(int);
 
+    callback produce-new();
+    callback produce-duplicate(int);
+    callback produce-send();
+    callback produce-confirm();
+    callback produce-cancel-confirm();
+    callback produce-close();
+    callback produce-format-value();
+    callback produce-value-edited();
+    callback produce-add-header();
+    callback produce-remove-header(int);
+    callback produce-header-edited(int, string, string);
+
     // The message area never gets narrower than this; splitters stop there.
-    property <length> center-min: 420px;
+    property <length> center-min: 600px;
     property <length> splitter-width: 7px;
     property <length> left-used: (root.show-connections ? root.connections-width + splitter-width : 0)
         + (root.show-topics ? root.topics-width + splitter-width : 0);
@@ -128,6 +179,8 @@ export component AppWindow inherits Window {
             rename-folder(id) => { root.rename-folder(id); }
             toggle-confirm(id) => { root.toggle-confirm(id); }
             delete-folder(id) => { root.delete-folder(id); }
+            move-folder(id, target, after) => { root.move-folder(id, target, after); }
+            shift-folder(id, by) => { root.shift-folder(id, by); }
         }
         if root.show-connections: Splitter {
             size <=> root.connections-width;
@@ -135,117 +188,186 @@ export component AppWindow inherits Window {
             max-size: max(160px, min(420px, room-for(root.connections-width)));
         }
 
-        if root.show-topics: TopicsPane {
-            width: root.topics-width;
-            topics: root.topics;
-            selected: root.selected-topic;
-            hidden-note: root.hidden-topics-note;
-            show-internal <=> root.show-internal;
-            hide-unreadable <=> root.hide-unreadable;
-            connected: root.connected;
-            select(name) => { root.select-topic(name); }
-            filter-changed(text) => { root.topic-filter-changed(text); }
-            show-internal-toggled(on) => { root.show-internal-toggled(on); }
-            hide-unreadable-toggled(on) => { root.hide-unreadable-toggled(on); }
-        }
-        if root.show-topics: Splitter {
-            size <=> root.topics-width;
-            min-size: 160px;
-            max-size: max(160px, min(520px, room-for(root.topics-width)));
-        }
+        VerticalLayout {
+            // Toolbar, as on macOS: add menu and connection on the left,
+            // Messages / Partitions in the middle, actions on the right.
+            HorizontalLayout {
+                padding: 8px;
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 6px;
 
-        // An explicit min-width replaces the one implied by the content, so
-        // a wide toolbar or table is clipped instead of pushing the
-        // inspector out of the window.
-        Rectangle {
-            horizontal-stretch: 1;
-            min-width: root.center-min;
-            clip: true;
-
-            VerticalLayout {
-                HorizontalLayout {
-                    padding: 10px;
-                    spacing: 10px;
-
-                    IconToggle {
-                        icon: @image-url("icons/sidebar-left.svg");
-                        checked <=> root.show-connections;
+                IconToggle {
+                    icon: @image-url("icons/panel-left.svg");
+                    checked <=> root.show-connections;
+                }
+                IconToggle {
+                    icon: @image-url("icons/list.svg");
+                    checked <=> root.show-topics;
+                }
+                MenuButton {
+                    icon: @image-url("icons/plus.svg");
+                    MenuRow {
+                        text: "New Connection…";
+                        clicked => { root.new-connection(""); }
                     }
-                    IconToggle {
-                        icon: @image-url("icons/topics.svg");
-                        checked <=> root.show-topics;
-                    }
-                    // Takes the free space, so the fetch controls sit on the right.
-                    Text {
-                        text: root.selected-topic == "" ? "No topic selected" : root.selected-topic;
-                        overflow: elide;
-                        min-width: 60px;
-                        horizontal-stretch: 1;
-                        font-size: 15px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-                    Text { text: "From"; vertical-alignment: center; }
-                    ComboBox {
-                        width: 130px;
-                        model: ["Latest", "Beginning"];
-                        current-index <=> root.start-index;
-                    }
-                    Text { text: "Limit"; vertical-alignment: center; }
-                    ComboBox {
-                        width: 90px;
-                        model: ["50", "200", "500", "1000"];
-                        current-index <=> root.limit-index;
-                    }
-                    Button {
-                        text: root.loading ? "Fetching…" : "Fetch";
-                        primary: true;
-                        enabled: root.selected-topic != "" && !root.loading;
-                        clicked => { root.fetch(); }
-                    }
-                    IconToggle {
-                        icon: @image-url("icons/sidebar-right.svg");
-                        checked <=> root.show-inspector;
+                    MenuRow {
+                        text: "New Folder…";
+                        clicked => { root.new-folder(); }
                     }
                 }
-                Divider { height: 1px; }
-
-                MessageTable {
-                    vertical-stretch: 1;
-                    rows: root.message-rows;
-                    mono-font: root.mono-font;
-                    current-row <=> root.current-row;
-                    sort-column: root.sort-column;
-                    sort-ascending: root.sort-ascending;
-                    row-selected(row) => { root.select-message(row); }
-                    sort(column) => { root.sort-messages(column); }
+                Text {
+                    text: root.connection-name;
+                    font-size: 15px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    min-width: 0px;
+                    horizontal-stretch: 1;
                 }
-
-                Divider { height: 1px; }
-                HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
-                    height: 26px;
-                    Text {
-                        text: root.status-text;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                        color: Palette.foreground.with-alpha(0.6);
+                Segmented {
+                    items: ["Messages", "Partitions"];
+                    current <=> root.tab-index;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                MenuButton {
+                    icon: @image-url("icons/list-filter.svg");
+                    menu-width: 270px;
+                    MenuRow {
+                        text: "Show Internal Topics";
+                        checkable: true;
+                        checked: root.show-internal;
+                        clicked => {
+                            root.show-internal = !root.show-internal;
+                            root.show-internal-toggled(root.show-internal);
+                        }
                     }
+                    MenuRow {
+                        text: "Hide Topics Without Read Access";
+                        checkable: true;
+                        checked: root.hide-unreadable;
+                        clicked => {
+                            root.hide-unreadable = !root.hide-unreadable;
+                            root.hide-unreadable-toggled(root.hide-unreadable);
+                        }
+                    }
+                }
+                IconButton {
+                    icon: @image-url("icons/refresh-cw.svg");
+                    enabled: root.connected;
+                    clicked => { root.refresh-topics(); }
+                }
+                if root.connection-writable: IconButton {
+                    icon: @image-url("icons/send.svg");
+                    enabled: root.selected-topic != "" && root.topic-writable;
+                    clicked => { root.produce-new(); }
+                }
+                // Read-only connections show a lock where the produce button would be.
+                if !root.connection-writable && root.connected: Rectangle {
+                    width: 30px;
+                    Badge {
+                        source: @image-url("icons/lock.svg");
+                        size: 15px;
+                        colorize: Palette.foreground.with-alpha(0.45);
+                    }
+                }
+                IconToggle {
+                    icon: @image-url("icons/panel-right.svg");
+                    checked <=> root.show-inspector;
                 }
             }
-        }
+            Divider { height: 1px; }
 
-        if root.show-inspector: Splitter {
-            size <=> root.inspector-width;
-            min-size: 240px;
-            max-size: max(240px, min(720px, room-for(root.inspector-width)));
-            grows-left: true;
-        }
-        if root.show-inspector: InspectorPane {
-            width: root.inspector-width;
-            detail: root.detail;
-            mono-font: root.mono-font;
+            HorizontalLayout {
+                vertical-stretch: 1;
+
+                if root.show-topics: TopicsPane {
+                    width: root.topics-width;
+                    topics: root.topics;
+                    selected: root.selected-topic;
+                    hidden-count: root.hidden-topics-count;
+                    select(name) => { root.select-topic(name); }
+                    filter-changed(text) => { root.topic-filter-changed(text); }
+                    show-hidden => {
+                        root.hide-unreadable = false;
+                        root.hide-unreadable-toggled(false);
+                    }
+                }
+                if root.show-topics: Splitter {
+                    size <=> root.topics-width;
+                    min-size: 160px;
+                    max-size: max(160px, min(520px, room-for(root.topics-width)));
+                }
+
+                // An explicit min-width replaces the one implied by the
+                // content, so the layout never overflows and pushes the
+                // inspector out; the fetch bar is sized to fit in it.
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: root.center-min;
+                    clip: true;
+
+                    if root.tab-index == 0: VerticalLayout {
+                        FetchBar {
+                            start-index <=> root.start-index;
+                            start-value <=> root.start-value;
+                            partition-names: root.partition-names;
+                            partition-index <=> root.partition-index;
+                            limit-index <=> root.limit-index;
+                            loading: root.loading;
+                            can-fetch: root.selected-topic != "";
+                            search <=> root.search;
+                            fetch => { root.fetch(); }
+                            search-changed(text) => { root.search-changed(text); }
+                        }
+                        Divider { height: 1px; }
+
+                        MessageTable {
+                            vertical-stretch: 1;
+                            rows: root.message-rows;
+                            mono-font: root.mono-font;
+                            current-row <=> root.current-row;
+                            sort-column: root.sort-column;
+                            sort-ascending: root.sort-ascending;
+                            can-duplicate: root.connection-writable && root.topic-writable;
+                            row-selected(row) => { root.select-message(row); }
+                            sort(column) => { root.sort-messages(column); }
+                            duplicate(row) => { root.produce-duplicate(row); }
+                        }
+
+                        Divider { height: 1px; }
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            height: 26px;
+                            Text {
+                                text: root.status-text;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                color: Palette.foreground.with-alpha(0.6);
+                            }
+                        }
+                    }
+
+                    if root.tab-index == 1: PartitionsTable {
+                        rows: root.partition-rows;
+                    }
+                }
+
+                if root.show-inspector: Splitter {
+                    size <=> root.inspector-width;
+                    min-size: 240px;
+                    max-size: max(240px, min(720px, room-for(root.inspector-width)));
+                    grows-left: true;
+                }
+                if root.show-inspector: InspectorPane {
+                    width: root.inspector-width;
+                    detail: root.detail;
+                    mono-font: root.mono-font;
+                    format-index <=> root.format-index;
+                    format-changed(index) => { root.format-changed(index); }
+                }
+            }
         }
     }
 
@@ -272,6 +394,37 @@ export component AppWindow inherits Window {
         add-extra => { root.editor-add-extra(); }
         remove-extra(index) => { root.editor-remove-extra(index); }
         extra-edited(index, key, value) => { root.editor-extra-edited(index, key, value); }
+    }
+
+    if root.produce-open: ProduceSheet {
+        width: root.width;
+        height: root.height;
+        topic: root.selected-topic;
+        connection: root.produce-connection;
+        confirm-folder: root.produce-confirm-folder;
+        partition-names: root.produce-partition-names;
+        partition-index <=> root.produce-partition-index;
+        key <=> root.produce-key;
+        key-encoding-index <=> root.produce-key-encoding-index;
+        tombstone <=> root.produce-tombstone;
+        value <=> root.produce-value;
+        value-encoding-index <=> root.produce-value-encoding-index;
+        value-problem: root.produce-value-problem;
+        headers: root.produce-headers;
+        sending: root.produce-sending;
+        result: root.produce-result;
+        result-ok: root.produce-result-ok;
+        sent-count: root.produce-sent-count;
+        confirming: root.produce-confirming;
+        send => { root.produce-send(); }
+        confirm => { root.produce-confirm(); }
+        cancel-confirm => { root.produce-cancel-confirm(); }
+        close => { root.produce-close(); }
+        format-value => { root.produce-format-value(); }
+        value-edited => { root.produce-value-edited(); }
+        add-header => { root.produce-add-header(); }
+        remove-header(index) => { root.produce-remove-header(index); }
+        header-edited(index, key, value) => { root.produce-header-edited(index, key, value); }
     }
 
     if root.prompt-open: NamePrompt {

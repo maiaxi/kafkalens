@@ -1,8 +1,8 @@
 // Connections sidebar: folders (collapsible) with their connections, then
 // the connections outside any folder. Rust flattens the tree into rows.
 
-import { Button, ListView, Palette } from "std-widgets.slint";
-import { Badge, SectionTitle } from "common.slint";
+import { ListView, Palette } from "std-widgets.slint";
+import { Badge, SectionTitle, SideList } from "common.slint";
 
 export enum RowKind { folder, connection, heading }
 
@@ -18,6 +18,8 @@ export struct SidebarRow {
     writable: bool,
     // Folder: asks for confirmation before producing.
     protected: bool,
+    // Folder: its position among the folders.
+    folder-index: int,
     // Connection: 0 idle, 1 connecting, 2 connected, 3 failed.
     status: int,
     folder-id: string,
@@ -28,9 +30,64 @@ export struct FolderItem {
     name: string,
 }
 
+// TouchArea that tells a click from a drag. Positions are absolute, so the
+// pane can hit-test the rows under the pointer.
+//
+// A drag must end exactly once, whatever order the release arrives in:
+// `clicked` (only when released over this area) may come before or after the
+// `up` pointer event, and when released elsewhere it does not come at all.
+component DragArea inherits TouchArea {
+    callback tapped();
+    callback drag-started();
+    callback drag-moved(length, length);
+    callback drag-ended();
+    property <bool> dragging;
+    // A drag just ended through the `up` event; the click after it is not one.
+    property <bool> just-ended;
+
+    function finish-drag() {
+        root.dragging = false;
+        root.drag-ended();
+    }
+
+    pointer-event(event) => {
+        if event.kind == PointerEventKind.down {
+            root.dragging = false;
+            root.just-ended = false;
+        }
+        if event.kind == PointerEventKind.up && root.dragging {
+            root.just-ended = true;
+            root.finish-drag();
+        }
+    }
+    moved => {
+        if self.pressed {
+            if !root.dragging && (abs(self.mouse-x - self.pressed-x) > 5px || abs(self.mouse-y - self.pressed-y) > 5px) {
+                root.dragging = true;
+                root.drag-started();
+            }
+            if root.dragging {
+                root.drag-moved(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+    clicked => {
+        if root.just-ended {
+            root.just-ended = false;
+        } else if root.dragging {
+            root.finish-drag();
+        } else {
+            root.tapped();
+        }
+    }
+}
+
 component FolderRow inherits Rectangle {
     in property <SidebarRow> item;
     callback toggle();
+    callback drag-started();
+    callback drag-moved(length, length);
+    callback drag-ended();
 
     border-radius: 6px;
     background: touch.has-hover ? Palette.foreground.with-alpha(0.05) : transparent;
@@ -41,7 +98,7 @@ component FolderRow inherits Rectangle {
         VerticalLayout {
             alignment: center;
             Image {
-                source: @image-url("icons/chevron.svg");
+                source: @image-url("icons/chevron-right.svg");
                 width: 12px;
                 height: 12px;
                 colorize: Palette.foreground.with-alpha(0.55);
@@ -63,12 +120,15 @@ component FolderRow inherits Rectangle {
             color: Palette.foreground.with-alpha(0.75);
         }
         if item.protected: Badge {
-            source: @image-url("icons/shield.svg");
+            source: @image-url("icons/shield-alert.svg");
             colorize: #f59e0b;
         }
     }
-    touch := TouchArea {
-        clicked => { root.toggle(); }
+    touch := DragArea {
+        tapped => { root.toggle(); }
+        drag-started => { root.drag-started(); }
+        drag-moved(x, y) => { root.drag-moved(x, y); }
+        drag-ended => { root.drag-ended(); }
     }
 }
 
@@ -78,20 +138,19 @@ component ConnectionRow inherits Rectangle {
     callback clicked();
 
     border-radius: 6px;
-    background: selected ? Palette.accent-background.with-alpha(0.85) : touch.has-hover ? Palette.foreground.with-alpha(0.06) : transparent;
+    background: selected ? SideList.selected : touch.has-hover ? SideList.hover : transparent;
     HorizontalLayout {
         padding-left: item.indented ? 24px : 10px;
         padding-right: 10px;
         spacing: 8px;
-        VerticalLayout {
-            alignment: center;
-            Rectangle {
-                width: 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: item.status == 2 ? #22c55e : item.status == 3 ? #f59e0b
-                    : item.status == 1 ? Palette.foreground.with-alpha(0.5) : Palette.foreground.with-alpha(0.2);
-            }
+        // Status as on macOS: a server icon, green when connected, a warning
+        // when the connection failed.
+        Badge {
+            source: item.status == 3 ? @image-url("icons/triangle-alert.svg") : @image-url("icons/server.svg");
+            size: 16px;
+            colorize: item.status == 2 ? #22c55e
+                : item.status == 3 ? #f59e0b
+                : Palette.foreground.with-alpha(item.status == 1 ? 0.35 : 0.55);
         }
         VerticalLayout {
             alignment: center;
@@ -102,11 +161,12 @@ component ConnectionRow inherits Rectangle {
                     text: item.name;
                     font-weight: 600;
                     overflow: elide;
-                    color: root.selected ? Palette.accent-foreground : Palette.foreground;
+                    color: Palette.foreground;
                 }
                 // Read-only is the norm; flag the connections that can write.
                 if item.writable: Badge {
                     source: @image-url("icons/pencil.svg");
+                    lift: 2px;
                     colorize: #f59e0b;
                 }
                 Rectangle { horizontal-stretch: 1; }
@@ -115,12 +175,20 @@ component ConnectionRow inherits Rectangle {
                 text: item.subtitle;
                 font-size: 11px;
                 overflow: elide;
-                color: root.selected ? Palette.accent-foreground.with-alpha(0.8) : Palette.foreground.with-alpha(0.55);
+                color: Palette.foreground.with-alpha(0.55);
             }
         }
     }
-    touch := TouchArea {
-        clicked => { root.clicked(); }
+    // Dragging the row onto a folder files it there (see ConnectionsPane).
+    callback drag-started();
+    callback drag-moved(length, length);
+    callback drag-ended();
+
+    touch := DragArea {
+        tapped => { root.clicked(); }
+        drag-started => { root.drag-started(); }
+        drag-moved(x, y) => { root.drag-moved(x, y); }
+        drag-ended => { root.drag-ended(); }
     }
 }
 
@@ -142,6 +210,72 @@ export component ConnectionsPane inherits Rectangle {
     callback rename-folder(string);
     callback toggle-confirm(string);
     callback delete-folder(string);
+    // Folder id, target folder id ("" for the end), after the target.
+    callback move-folder(string, string, bool);
+    // Folder id, -1 up or 1 down.
+    callback shift-folder(string, int);
+
+    // Drag and drop. A connection goes into the folder it is dropped on (or
+    // the folder of the connection it is dropped on; the CONNECTIONS heading
+    // or empty space means none). A folder is reordered: before or after the
+    // folder it is dropped on, or to the end on the heading / empty space.
+    property <bool> dragging;
+    property <bool> drag-folder;
+    property <string> drag-id;
+    property <string> drag-name;
+    property <string> drag-from;
+    property <length> drag-x;
+    property <length> drag-y;
+    // Row under the pointer, the folder a drop there means for a connection,
+    // and where it puts a folder.
+    property <string> target-key;
+    property <string> target-folder;
+    property <bool> target-is-folder;
+    property <bool> target-after;
+    property <int> target-index;
+    property <int> drag-index;
+    // Folder drags: the position the folder would land at (folders before
+    // which it goes; the number of folders for the end), or -1. Positions
+    // right above or below the dragged folder change nothing, so they get no
+    // line and a drop there is ignored. "After folder X" is drawn above the
+    // next folder, so the line never splits a folder from its connections.
+    property <int> line-position: {
+        if !root.drag-folder { return -1; }
+        let position = root.over-empty-space || root.target-key == "heading" ? root.folders.length
+            : root.target-key != "" && root.target-is-folder ? root.target-index + (root.target-after ? 1 : 0)
+            : -1;
+        return position == root.drag-index || position == root.drag-index + 1 ? -1 : position;
+    }
+    // Over the list but below its rows.
+    property <bool> over-empty-space: root.dragging && root.target-key == ""
+        && root.drag-x >= list.absolute-position.x && root.drag-x < list.absolute-position.x + list.width
+        && root.drag-y >= list.absolute-position.y && root.drag-y < list.absolute-position.y + list.height;
+
+    function start-drag(row: SidebarRow) {
+        root.dragging = true;
+        root.drag-folder = row.kind == RowKind.folder;
+        root.drag-id = row.id;
+        root.drag-name = row.name;
+        root.drag-from = row.folder-id;
+        root.drag-index = row.folder-index;
+        root.target-key = "";
+    }
+
+    function end-drag() {
+        if root.drag-folder {
+            if root.line-position >= 0 && root.target-is-folder && root.target-key != "" {
+                root.move-folder(root.drag-id, root.target-folder, root.target-after);
+            } else if root.line-position >= 0 {
+                root.move-folder(root.drag-id, "", false);
+            }
+        } else if root.target-key != "" && root.target-folder != root.drag-from {
+            root.move-to(root.drag-id, root.target-folder);
+        } else if root.over-empty-space && root.drag-from != "" {
+            root.move-to(root.drag-id, "");
+        }
+        root.dragging = false;
+        root.target-key = "";
+    }
 
     background: Palette.alternate-background;
 
@@ -149,10 +283,35 @@ export component ConnectionsPane inherits Rectangle {
         padding: 10px;
         spacing: 6px;
 
-        ListView {
+        list := ListView {
             vertical-stretch: 1;
             for row in root.rows: Rectangle {
                 height: row.kind == RowKind.connection ? 46px : 30px;
+
+                property <string> key: row.kind == RowKind.heading ? "heading" : row.id;
+                property <string> drop-folder: row.kind == RowKind.folder ? row.id
+                    : row.kind == RowKind.connection ? row.folder-id : "";
+                property <bool> drop-here: root.dragging
+                    && root.drag-x >= self.absolute-position.x && root.drag-x < self.absolute-position.x + self.width
+                    && root.drag-y >= self.absolute-position.y && root.drag-y < self.absolute-position.y + self.height;
+                // Lower half of the row: a folder dropped here goes after it.
+                property <bool> drop-after: root.drag-y >= self.absolute-position.y + self.height / 2;
+                changed drop-here => {
+                    if self.drop-here {
+                        root.target-key = self.key;
+                        root.target-folder = self.drop-folder;
+                        root.target-is-folder = row.kind == RowKind.folder;
+                        root.target-after = self.drop-after;
+                        root.target-index = row.folder-index;
+                    } else if root.target-key == self.key {
+                        root.target-key = "";
+                    }
+                }
+                changed drop-after => {
+                    if self.drop-here {
+                        root.target-after = self.drop-after;
+                    }
+                }
 
                 if row.kind == RowKind.heading: SectionTitle {
                     x: 4px;
@@ -176,6 +335,15 @@ export component ConnectionsPane inherits Rectangle {
                         }
                         MenuSeparator { }
                         MenuItem {
+                            title: "Move Up";
+                            activated => { root.shift-folder(row.id, -1); }
+                        }
+                        MenuItem {
+                            title: "Move Down";
+                            activated => { root.shift-folder(row.id, 1); }
+                        }
+                        MenuSeparator { }
+                        MenuItem {
                             title: "Delete Folder";
                             activated => { root.delete-folder(row.id); }
                         }
@@ -183,6 +351,12 @@ export component ConnectionsPane inherits Rectangle {
                     FolderRow {
                         item: row;
                         toggle => { root.toggle-folder(row.id); }
+                        drag-started => { root.start-drag(row); }
+                        drag-moved(x, y) => {
+                            root.drag-x = x;
+                            root.drag-y = y;
+                        }
+                        drag-ended => { root.end-drag(); }
                     }
                 }
 
@@ -217,7 +391,37 @@ export component ConnectionsPane inherits Rectangle {
                         item: row;
                         selected: row.id == root.selected-id;
                         clicked => { root.select(row.id); }
+                        drag-started => { root.start-drag(row); }
+                        drag-moved(x, y) => {
+                            root.drag-x = x;
+                            root.drag-y = y;
+                        }
+                        drag-ended => { root.end-drag(); }
                     }
+                }
+
+                // Connection drag: highlights the folder a drop moves it to.
+                // The heading also lights up over the list's empty space,
+                // which means the same: out of any folder.
+                if !root.drag-folder
+                    && (drop-here || (row.kind == RowKind.heading && root.over-empty-space))
+                    && drop-folder != root.drag-from: Rectangle {
+                    border-radius: 6px;
+                    border-width: 1.5px;
+                    border-color: Palette.accent-background;
+                    background: Palette.accent-background.with-alpha(0.15);
+                }
+
+                // Folder drag: a line along the top of the row the folder
+                // will land above (the heading for the end).
+                if root.line-position >= 0 && (
+                    (row.kind == RowKind.folder && row.folder-index == root.line-position)
+                    || (row.kind == RowKind.heading && root.line-position == root.folders.length)
+                ): Rectangle {
+                    y: 0px;
+                    height: 2px;
+                    border-radius: 1px;
+                    background: Palette.accent-background;
                 }
             }
         }
@@ -228,19 +432,23 @@ export component ConnectionsPane inherits Rectangle {
             wrap: word-wrap;
             color: Palette.foreground.with-alpha(0.6);
         }
+    }
 
-        HorizontalLayout {
-            spacing: 6px;
-            Button {
-                text: "+ Connection";
-                horizontal-stretch: 1;
-                clicked => { root.new-connection(""); }
-            }
-            Button {
-                text: "+ Folder";
-                horizontal-stretch: 1;
-                clicked => { root.new-folder(); }
-            }
+    if root.dragging: Rectangle {
+        x: root.drag-x - root.absolute-position.x + 12px;
+        y: root.drag-y - root.absolute-position.y - 13px;
+        width: ghost.preferred-width + 20px;
+        height: 26px;
+        border-radius: 6px;
+        background: Palette.accent-background;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000055;
+        ghost := Text {
+            text: root.drag-name;
+            color: Palette.accent-foreground;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-alignment: center;
         }
     }
 }
