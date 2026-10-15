@@ -12,9 +12,9 @@ concurrency:
 jobs:
   core:
     name: Core tests (Linux, live brokers)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -40,7 +40,7 @@ jobs:
     name: macOS app build
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -63,11 +63,11 @@ jobs:
             artifact: kafkalens-windows-x64
             binary: target/release/kafkalens.exe
           - name: Linux
-            os: ubuntu-latest
+            os: ubuntu-24.04
             artifact: kafkalens-linux-x64
             binary: target/release/kafkalens
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -81,7 +81,10 @@ jobs:
       # The vendored OpenSSL build uses NASM for its assembly on Windows.
       - name: Install NASM
         if: runner.os == 'Windows'
-        uses: ilammy/setup-nasm@v1
+        shell: bash
+        run: |
+          choco install nasm --no-progress -y
+          echo "C:\\Program Files\\NASM" >> "$GITHUB_PATH"
 
       - name: Test
         run: cargo test -p kafkalens-desktop
@@ -89,7 +92,7 @@ jobs:
       - name: Build
         run: cargo build --release -p kafkalens-desktop
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.binary }}

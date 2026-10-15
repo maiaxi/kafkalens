@@ -20,11 +20,11 @@ permissions:
 jobs:
   version:
     name: Version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read version and check it matches the tag
         id: version
         run: |
@@ -44,7 +44,7 @@ jobs:
       HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
       HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -93,7 +93,7 @@ jobs:
           ditto -c -k --keepParent dist/Kafkalens.app "release/$asset"
           (cd release && shasum -a 256 "$asset" > "$asset.sha256")
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-macos
           path: release/
@@ -105,11 +105,16 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # The vendored OpenSSL build uses NASM for its assembly on Windows.
-      - uses: ilammy/setup-nasm@v1
+      # (Installed with Chocolatey: the setup-nasm action still runs on Node 20.)
+      - name: Install NASM
+        shell: bash
+        run: |
+          choco install nasm --no-progress -y
+          echo "C:\\Program Files\\NASM" >> "$GITHUB_PATH"
 
       - name: Build
         run: cargo build --release -p kafkalens-desktop
@@ -123,7 +128,7 @@ jobs:
           cp target/release/kafkalens.exe "release/$asset"
           (cd release && sha256sum "$asset" > "$asset.sha256")
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-windows
           path: release/
@@ -131,11 +136,11 @@ jobs:
   linux:
     name: Linux app
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install build dependencies
@@ -156,7 +161,7 @@ jobs:
           tar -czf "release/$name.tar.gz" -C dist "$name"
           (cd release && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-linux
           path: release/
@@ -165,12 +170,12 @@ jobs:
     name: Draft release
     if: github.ref_type == 'tag'
     needs: [version, macos, windows, linux]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
       HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: release
