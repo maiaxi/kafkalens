@@ -60,6 +60,12 @@ fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     ui.set_mono_font(monospace_font().into());
 
+    ui.set_app_version(kafkalens_core::core_version().into());
+    ui.on_quit(|| {
+        let _ = slint::quit_event_loop();
+    });
+    ui.on_open_url(|url| open_url(&url));
+
     let layout = Layout::load();
     apply_layout(&ui, &layout);
 
@@ -324,7 +330,8 @@ fn current_layout(ui: &AppWindow) -> Layout {
 /// open a connection and topic at startup, KAFKALENS_ROW=<n> shows that
 /// message in the inspector (KAFKALENS_PRODUCE=open|send|confirm also
 /// duplicates it into the produce sheet and goes that far), KAFKALENS_EDIT=<index> opens the editor on
-/// that connection, KAFKALENS_TAB=1 opens the Partitions tab, and
+/// that connection, KAFKALENS_TAB=1 opens the Partitions tab, KAFKALENS_ABOUT=1
+/// opens the About sheet, and
 /// KAFKALENS_SIZE=<w>x<h> sets the window size, to
 /// iterate on the UI quickly.
 fn open_from_env(ui: &AppWindow, state: &Shared) {
@@ -336,6 +343,9 @@ fn open_from_env(ui: &AppWindow, state: &Shared) {
         Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
     }) {
         ui.window().set_size(slint::LogicalSize::new(w, h));
+    }
+    if std::env::var_os("KAFKALENS_ABOUT").is_some() {
+        ui.set_about_open(true);
     }
     if let Some(tab) = std::env::var("KAFKALENS_TAB").ok().and_then(|v| v.parse::<i32>().ok()) {
         ui.set_tab_index(tab);
@@ -409,6 +419,21 @@ fn open_from_env(ui: &AppWindow, state: &Shared) {
     );
     // Leaked on purpose: debug-only, and it must outlive this function.
     std::mem::forget(timer);
+}
+
+/// Opens `url` in the default browser.
+fn open_url(url: &str) {
+    let result = if cfg!(target_os = "windows") {
+        // `start` is a cmd builtin; the empty argument is the window title.
+        std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(url).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(url).spawn()
+    };
+    if let Err(err) = result {
+        eprintln!("kafkalens: could not open {url}: {err}");
+    }
 }
 
 fn monospace_font() -> &'static str {

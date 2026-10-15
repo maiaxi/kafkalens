@@ -1,0 +1,72 @@
+// About sheet. Shows the Slint attribution that the Slint Royalty-free
+// Desktop license asks for ("Made with Slint", via AboutSlint).
+
+import { AboutSlint, Button, Palette } from "std-widgets.slint";
+import { Sheet } from "editor.slint";
+
+export component AboutSheet inherits Sheet {
+    in property <string> version;
+    callback open-url(string);
+    callback close();
+
+    card-width: 420px;
+    card-height: 520px;
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 8px;
+        alignment: start;
+
+        HorizontalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("../assets/kafkalens.png");
+                width: 96px;
+                height: 96px;
+            }
+        }
+        Text {
+            text: "Kafkalens";
+            font-size: 22px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: "Version " + root.version;
+            horizontal-alignment: center;
+            color: Palette.foreground.with-alpha(0.6);
+        }
+        Text {
+            text: "A native desktop viewer for Kafka topics.";
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+        Text {
+            text: "github.com/maiaxi/kafkalens";
+            horizontal-alignment: center;
+            color: Palette.accent-background;
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.open-url("https://github.com/maiaxi/kafkalens"); }
+            }
+        }
+        Text {
+            text: "Licensed under MIT or Apache-2.0.";
+            horizontal-alignment: center;
+            font-size: 11px;
+            color: Palette.foreground.with-alpha(0.55);
+        }
+
+        Rectangle { height: 8px; }
+        AboutSlint { }
+
+        HorizontalLayout {
+            alignment: end;
+            Button {
+                text: "Close";
+                primary: true;
+                clicked => { root.close(); }
+            }
+        }
+    }
+}

@@ -5,6 +5,7 @@ import { ConnectionEditor, NamePrompt, PropertyItem } from "editor.slint";
 import { TopicItem, TopicsPane } from "topics.slint";
 import { FetchBar, HeaderItem, InspectorPane, MessageDetail, MessageRow, MessageTable, PartitionRow, PartitionsTable } from "messages.slint";
 import { ProduceSheet } from "produce.slint";
+import { AboutSheet } from "about.slint";
 
 // Re-exported so the Rust side gets these types.
 export { FolderItem, HeaderItem, MessageDetail, MessageRow, PartitionRow, PropertyItem, RowKind, SidebarRow, TopicItem }
@@ -101,6 +102,10 @@ export component AppWindow inherits Window {
     in property <int> editor-test-state;
     in property <string> editor-test-message;
 
+    // About.
+    in property <string> app-version;
+    in-out property <bool> about-open;
+
     // Name prompt (new / rename folder).
     in property <bool> prompt-open;
     in property <string> prompt-heading;
@@ -129,6 +134,9 @@ export component AppWindow inherits Window {
 
     callback prompt-accept();
     callback prompt-cancel();
+
+    callback open-url(string);
+    callback quit();
 
     callback select-topic(string);
     callback topic-filter-changed(string);
@@ -161,6 +169,34 @@ export component AppWindow inherits Window {
     property <length> right-used: root.show-inspector ? root.inspector-width + splitter-width : 0;
     function room-for(current: length) -> length {
         return root.width - root.left-used - root.right-used - root.center-min + current;
+    }
+
+    // Native menu bar on macOS, a menu row under the title bar on Windows
+    // and Linux.
+    MenuBar {
+        Menu {
+            title: "File";
+            MenuItem {
+                title: "New Connection…";
+                activated => { root.new-connection(""); }
+            }
+            MenuItem {
+                title: "New Folder…";
+                activated => { root.new-folder(); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: "Quit";
+                activated => { root.quit(); }
+            }
+        }
+        Menu {
+            title: "Help";
+            MenuItem {
+                title: "About Kafkalens";
+                activated => { root.about-open = true; }
+            }
+        }
     }
 
     HorizontalLayout {
@@ -426,6 +462,14 @@ export component AppWindow inherits Window {
         add-header => { root.produce-add-header(); }
         remove-header(index) => { root.produce-remove-header(index); }
         header-edited(index, key, value) => { root.produce-header-edited(index, key, value); }
+    }
+
+    if root.about-open: AboutSheet {
+        width: root.width;
+        height: root.height;
+        version: root.app-version;
+        open-url(url) => { root.open-url(url); }
+        close => { root.about-open = false; }
     }
 
     if root.prompt-open: NamePrompt {
