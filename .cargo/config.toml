@@ -5,10 +5,14 @@
 # keep rebuilding librdkafka.
 MACOSX_DEPLOYMENT_TARGET = "14.0"
 
-# Windows: link the C runtime statically, so the .exe runs without the
-# Visual C++ Redistributable (a portable, single-file app).
+# Windows:
+# - link the C runtime statically, so the .exe runs without the Visual C++
+#   Redistributable (a portable, single-file app);
+# - silence LNK4099 ("PDB 'ossl_static.pdb' was not found"): the vendored
+#   OpenSSL objects refer to a debug-symbols file its build does not keep.
+#   It only means no debug info for OpenSSL, once per object file.
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/IGNORE:4099"]
 
 [target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/IGNORE:4099"]
