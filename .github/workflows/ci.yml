@@ -50,3 +50,46 @@ jobs:
       - name: Build app
         working-directory: macos
         run: swift build
+
+  desktop:
+    name: Desktop app (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            artifact: kafkalens-windows-x64
+            binary: target/release/kafkalens.exe
+          - name: Linux
+            os: ubuntu-latest
+            artifact: kafkalens-linux-x64
+            binary: target/release/kafkalens
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Slint's winit backend links against fontconfig and xkbcommon.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      # The vendored OpenSSL build uses NASM for its assembly on Windows.
+      - name: Install NASM
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+
+      - name: Test
+        run: cargo test -p kafkalens-desktop
+
+      - name: Build
+        run: cargo build --release -p kafkalens-desktop
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.binary }}

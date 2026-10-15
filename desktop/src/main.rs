@@ -1,3 +1,6 @@
+// Release builds on Windows are GUI apps: no console window behind them.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 //! Kafkalens for Windows and Linux: a Slint UI over kafkalens-core, which it
 //! calls directly (no bindings layer, unlike the macOS app). Core calls block
 //! on the network, so they run on worker threads and post results back to

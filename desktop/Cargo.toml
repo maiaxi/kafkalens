@@ -26,3 +26,5 @@ uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 slint-build = "1.18"
+# Embeds the icon and version info in the Windows .exe.
+winresource = "0.1"

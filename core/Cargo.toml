@@ -26,3 +26,8 @@ serde_json = "1"
 thiserror = "2"
 uniffi = "0.32"
 uuid = { version = "1", features = ["v4"] }
+
+# librdkafka is normally built with its own configure script, which needs a
+# Unix shell; on Windows it is built with CMake instead.
+[target.'cfg(windows)'.dependencies]
+rdkafka = { version = "0.39", features = ["cmake-build"] }
