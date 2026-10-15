@@ -239,6 +239,12 @@ impl KafkaClient {
                     Some(Err(KafkaError::PartitionEOF(partition))) => {
                         pending.remove(&partition);
                     }
+                    // The throwaway group.id makes librdkafka look up a group
+                    // coordinator even though partitions are assigned by hand
+                    // and nothing is committed. Clusters that grant topic Read
+                    // but no group ACLs answer that with an error which says
+                    // nothing about the read itself, so skip it.
+                    Some(Err(err)) if is_group_authorization_error(&err) => {}
                     Some(Err(err)) => return Err(err.into()),
                     Some(Ok(msg)) => {
                         let partition = msg.partition();
@@ -334,6 +340,10 @@ impl KafkaClient {
             }
         }
     }
+}
+
+fn is_group_authorization_error(err: &KafkaError) -> bool {
+    err.rdkafka_error_code() == Some(rdkafka::types::RDKafkaErrorCode::GroupAuthorizationFailed)
 }
 
 fn find_topic<'a>(topics: &'a [MetadataTopic], name: &str) -> Result<&'a MetadataTopic> {

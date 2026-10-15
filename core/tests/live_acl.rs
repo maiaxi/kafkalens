@@ -57,3 +57,23 @@ fn reading_a_describe_only_topic_fails() {
         other => panic!("expected an authorization error, got {other:?}"),
     }
 }
+
+#[test]
+fn reading_a_readable_topic_needs_no_group_permissions() {
+    let Some(client) = reader() else { return };
+
+    // `reader` has no ACLs on any consumer group. Run a few times: the
+    // failure this guards against depended on timing.
+    for _ in 0..5 {
+        let result = client
+            .fetch_messages(FetchRequest {
+                topic: "acl.readable".into(),
+                partitions: None,
+                start: StartPosition::Beginning,
+                max_messages: 10,
+                timeout_ms: 5000,
+            })
+            .expect("fetch from a readable topic");
+        assert!(!result.messages.is_empty());
+    }
+}
