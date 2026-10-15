@@ -41,6 +41,10 @@ component DragArea inherits TouchArea {
     callback drag-started();
     callback drag-moved(length, length);
     callback drag-ended();
+    // Right-click at this position (relative to the area). The area takes
+    // the pointer events, so the ContextMenuArea around it never sees the
+    // right-click; the row opens the menu itself with show().
+    callback context-requested(length, length);
     property <bool> dragging;
     // A drag just ended through the `up` event; the click after it is not one.
     property <bool> just-ended;
@@ -51,6 +55,9 @@ component DragArea inherits TouchArea {
     }
 
     pointer-event(event) => {
+        if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+            root.context-requested(self.mouse-x, self.mouse-y);
+        }
         if event.kind == PointerEventKind.down {
             root.dragging = false;
             root.just-ended = false;
@@ -85,6 +92,7 @@ component DragArea inherits TouchArea {
 component FolderRow inherits Rectangle {
     in property <SidebarRow> item;
     callback toggle();
+    callback context-requested(length, length);
     callback drag-started();
     callback drag-moved(length, length);
     callback drag-ended();
@@ -126,6 +134,7 @@ component FolderRow inherits Rectangle {
     }
     touch := DragArea {
         tapped => { root.toggle(); }
+        context-requested(x, y) => { root.context-requested(x, y); }
         drag-started => { root.drag-started(); }
         drag-moved(x, y) => { root.drag-moved(x, y); }
         drag-ended => { root.drag-ended(); }
@@ -180,12 +189,14 @@ component ConnectionRow inherits Rectangle {
         }
     }
     // Dragging the row onto a folder files it there (see ConnectionsPane).
+    callback context-requested(length, length);
     callback drag-started();
     callback drag-moved(length, length);
     callback drag-ended();
 
     touch := DragArea {
         tapped => { root.clicked(); }
+        context-requested(x, y) => { root.context-requested(x, y); }
         drag-started => { root.drag-started(); }
         drag-moved(x, y) => { root.drag-moved(x, y); }
         drag-ended => { root.drag-ended(); }
@@ -319,7 +330,7 @@ export component ConnectionsPane inherits Rectangle {
                     vertical-alignment: center;
                 }
 
-                if row.kind == RowKind.folder: ContextMenuArea {
+                if row.kind == RowKind.folder: folder-menu := ContextMenuArea {
                     Menu {
                         MenuItem {
                             title: "New Connection…";
@@ -351,6 +362,7 @@ export component ConnectionsPane inherits Rectangle {
                     FolderRow {
                         item: row;
                         toggle => { root.toggle-folder(row.id); }
+                        context-requested(x, y) => { folder-menu.show({ x: x, y: y }); }
                         drag-started => { root.start-drag(row); }
                         drag-moved(x, y) => {
                             root.drag-x = x;
@@ -360,7 +372,7 @@ export component ConnectionsPane inherits Rectangle {
                     }
                 }
 
-                if row.kind == RowKind.connection: ContextMenuArea {
+                if row.kind == RowKind.connection: connection-menu := ContextMenuArea {
                     Menu {
                         MenuItem {
                             title: "Edit…";
@@ -391,6 +403,7 @@ export component ConnectionsPane inherits Rectangle {
                         item: row;
                         selected: row.id == root.selected-id;
                         clicked => { root.select(row.id); }
+                        context-requested(x, y) => { connection-menu.show({ x: x, y: y }); }
                         drag-started => { root.start-drag(row); }
                         drag-moved(x, y) => {
                             root.drag-x = x;

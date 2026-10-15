@@ -202,7 +202,7 @@ export component MessageTable inherits VerticalLayout {
 
             // Wraps the row so right-click opens the menu while left-click
             // still reaches the row's TouchArea.
-            ContextMenuArea {
+            row-menu := ContextMenuArea {
                 enabled: root.can-duplicate;
                 Menu {
                     MenuItem {
@@ -254,6 +254,13 @@ export component MessageTable inherits VerticalLayout {
                     clicked => {
                         root.current-row = index;
                         root.row-selected(index);
+                    }
+                    // The TouchArea takes the right-click, so open the menu
+                    // around it explicitly.
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.right && root.can-duplicate {
+                            row-menu.show({ x: self.mouse-x, y: self.mouse-y });
+                        }
                     }
                 }
             }
